@@ -7,10 +7,6 @@
 #ifndef PDF_DECLARATIONS_H
 #define PDF_DECLARATIONS_H
 
-#ifdef PDF_ERROR_H
-    #error "Don't include PdfDeclarations.h in PdfError.h"
-#endif
-
 /**
  * \file PdfDeclarations.h
  *      This file should be included as the FIRST file in every header of
@@ -26,9 +22,6 @@
 #include <podofo/auxiliary/baseincludes.h>
 
 #include <podofo/auxiliary/Version.h>
-
-// Error Handling Defines
-#include "PdfError.h"
 
 #define FORWARD_DECLARE_FCONFIG()\
 extern "C" {\
@@ -55,13 +48,19 @@ extern "C"\
  */
 namespace PoDoFo {
 
-// NOTE: This may change in the future
-using Matrix2D = std::array<double, 6>;
-
-/** A backing storage for a CID to GID map
- * \remarks It must preserve ordering
+/**
+ * Used in PoDoFo::LogMessage to specify the log level.
+ *
+ * \see PoDoFo::LogMessage
  */
-using CIDToGIDMap = std::map<unsigned, unsigned>;
+enum class PdfLogSeverity : uint8_t
+{
+    None = 0,            ///< Logging disabled
+    Error,               ///< Error
+    Warning,             ///< Warning
+    Information,         ///< Information message
+    Debug,               ///< Debug information
+};
 
 // Enums
 
@@ -102,19 +101,33 @@ enum class PdfALevel : uint8_t
     L4F,
 };
 
-enum class PdfStringState : uint8_t
+enum class PdfStringCharset : uint8_t
 {
-    RawBuffer,          ///< The string is an unvaluated raw buffer
-    Ascii,              ///< The string use characters that are in both Ascii and PdfDocEncoding charsets
-    PdfDocEncoding,     ///< The string uses characters that are in the whole PdfDocEncoding charset
-    Unicode,            ///< The string uses characters that are in the whole Unicode charset
+    Unknown = 0,        ///< Unknown charset
+    Ascii,              ///< UTF-8 string that have characters that are in both Ascii and PdfDocEncoding charsets
+    PdfDocEncoding,     ///< UTF-8 string that have characters that are in the whole PdfDocEncoding charset
+    Unicode,            ///< UTF-8 string that have characters that are in the whole Unicode charset
 };
 
 enum class PdfEncodingMapType : uint8_t
 {
-    Indeterminate,              ///< Indeterminate map type, such as identity encodings
-    Simple,                     ///< A legacy encoding, such as built-in or difference
+    Indeterminate = 0,          ///< Indeterminate map type, such as non standard identity encodings
+    Simple,                     ///< A legacy encoding, such as predefined, Type1 font built-in, or difference
     CMap                        ///< A proper CMap encoding or pre-defined CMap names
+};
+
+enum class PdfPredefinedEncodingType : uint8_t
+{
+    Indeterminate = 0,          ///< Indeterminate predefined map type
+    LegacyPredefined,           ///< A legacy predefined encoding, such as "WinAnsiEncoding", "MacRomanEncoding" or "MacExpertEncoding"
+    PredefinedCMap,             ///< A predefined CMap, see ISO 32000-2:2020 "9.7.5.2 Predefined CMaps"
+    IdentityCMap,               ///< A predefined identity CMap that is either "Identity-H" or "Identity-V"
+};
+
+enum class PdfWModeKind : uint8_t
+{
+    Horizontal = 0,
+    Vertical = 1,
 };
 
 /**
@@ -126,11 +139,8 @@ enum class PdfWriteFlags
     Clean = 1,             ///< Create a PDF that is readable in a text editor, i.e. insert spaces and linebreaks between tokens
     NoInlineLiteral = 2,   ///< Don't write spaces before literal types (numerical, references, null)
     NoFlateCompress = 4,
-
-    // NOTE: The following flags are actually never set but
-    // they are kept for documenting some PDF peculiarities
-    // when writing compact code
-    NoPDFAPreserve = 256,    ///< When writing compact (PdfWriteFlags::Clean is unset) code, preserving PDF/A compliance is not required
+    PdfAPreserve = 8,      ///< Preserve PDFA compliance during writing (NOTE: it does not itself convert the document to PDF/A)
+    SkipDelimiters = 16,   ///< Skip delimiters in serialization of strings and outer dictionaries/arrays
 };
 
 /**
@@ -154,6 +164,23 @@ enum class PdfDataType : uint8_t
     Null,                  ///< The null datatype is always null
     Reference,             ///< The reference datatype contains references to PDF objects in the PDF file of the form 4 0 R. \see PdfObject
     RawData,               ///< Raw PDF data
+};
+
+enum class PdfTokenType : uint8_t
+{
+    Unknown = 0,
+    Literal,
+    ParenthesisLeft,
+    ParenthesisRight,
+    BraceLeft,
+    BraceRight,
+    AngleBracketLeft,
+    AngleBracketRight,
+    DoubleAngleBracketsLeft,
+    DoubleAngleBracketsRight,
+    SquareBracketLeft,
+    SquareBracketRight,
+    Slash,
 };
 
 enum class PdfTextExtractFlags
@@ -198,7 +225,7 @@ enum class PdfFilterType : uint8_t
     Crypt
 };
 
-enum class PdfExportFormat
+enum class PdfExportFormat : uint8_t
 {
     Png = 1,        ///< NOTE: Not yet supported
     Jpeg = 2,
@@ -223,7 +250,7 @@ enum class PdfFontDescriptorFlags : uint32_t
     ForceBold   = 1 << 18, ///< Determine whether bold glyphs shall be painted with extra pixels even
 };
 
-enum class PdfFontStretch
+enum class PdfFontStretch : uint8_t
 {
     Unknown = 0,
     UltraCondensed,
@@ -249,8 +276,8 @@ enum class PdfFontType : uint8_t
     Type1,
     Type3,
     TrueType,
-    CIDType1,    ///< This is a "CIDFontType0"
-    CIDTrueType, ///< This is a "CIDFontType2"
+    CIDCFF,      ///< This is a "/CIDFontType0" font
+    CIDTrueType, ///< This is a "/CIDFontType2" font
 };
 
 enum class PdfFontFileType : uint8_t
@@ -258,35 +285,37 @@ enum class PdfFontFileType : uint8_t
     // Table 126 – Embedded font organization for various font types
     Unknown = 0,
     Type1,
-    Type1CCF,    ///< Compact Font Representation for /Type1 fonts
-    CIDType1,    ///< This is a Type1 font that can be used only in CID Fonts
+    Type1CFF,       ///< Compact Font representation for a Type1 font, as described by Adobe Technical Note #5176 "The Compact Font Format Specification"
+    CIDKeyedCFF,    ///< A Compact Font representation of a CID keyed font, as described by Adobe Technical Note #5176 "The Compact Font Format Specification"
     Type3,
-    TrueType,
-    OpenType     ///< OpenType font. This is /Subtype "OpenType" for /FontFile3
+    TrueType,       ///< A TrueType/OpenType font that has a "glyf" table
+    OpenTypeCFF     ///< OpenType font with a "CFF"/"CFF2" table, as described in ISO/IEC 14496-22
 };
 
 /** Font style flags used during searches
  */
 enum class PdfFontStyle : uint8_t
 {
-    Regular = 0,
+    None = 0,
     Italic = 1,
     Bold = 2,
+    // Alias to represent a font with regular style
+    Regular = None,
 };
 
 /** When accessing a glyph, there may be a difference in
- * the glyph ID to retrieve the width or to index it
+ * the glyph ID to retrieve the widths or to index it
  * within the font program
  */
 enum class PdfGlyphAccess : uint8_t
 {
-    Width = 1,         ///< The glyph is accessed in the widths arrays (/Widths, /W1 keys)
+    ReadMetrics = 1,   ///< The glyph is accessed in the PDF metrics arrays (/Widths, /W keys)
     FontProgram = 2    ///< The glyph is accessed in the font program
 };
 
 /** Flags to control font creation.
  */
-enum class PdfFontAutoSelectBehavior
+enum class PdfFontAutoSelectBehavior : uint8_t
 {
     None = 0,                   ///< No auto selection
     Standard14 = 1,             ///< Automatically select a Standard14 font if the fontname matches one of them
@@ -303,11 +332,11 @@ enum class PdfFontCreateFlags
     PreferNonCID = 4,         ///< Prefer non CID, simple fonts (/Type1, /TrueType)
 };
 
-enum class PdfFontMatchBehaviorFlags
+enum class PdfFontMatchBehaviorFlags : uint8_t
 {
     None,
-    NormalizePattern = 1,     ///< Normalize search pattern, removing subset prefixes like "ABCDEF+" and extract flags from it (like ",Bold", "-Italic")
-    MatchPostScriptName = 2,  ///< Match postscript font name. The default is match family name. This search may be more specific
+    NormalizePattern = 1,         ///< Normalize search pattern, removing subset prefixes like "ABCDEF+" and extract flags from it (like ",Bold", "-Italic")
+    SkipMatchPostScriptName = 2,  ///< Skip matching postscript font name
 };
 
 /**
@@ -330,7 +359,7 @@ enum class PdfColorSpaceType : uint8_t
     DeviceN
 };
 
-enum class PdfPixelFormat
+enum class PdfPixelFormat : uint8_t
 {
     Unknown = 0,
     Grayscale,
@@ -347,7 +376,7 @@ enum class PdfPixelFormat
  *
  * Compare ISO 32000-1:2008, Table 106 "Text rendering modes"
  */
-enum class PdfTextRenderingMode
+enum class PdfTextRenderingMode : uint8_t
 {
     Fill = 0,                  ///< Default mode, fill text
     Stroke,                    ///< Stroke text
@@ -363,9 +392,9 @@ enum class PdfTextRenderingMode
  * Enum for the different stroke styles that can be set
  * when drawing to a PDF file (mostly for line drawing).
  */
-enum class PdfStrokeStyle
+enum class PdfStrokeStyle : uint8_t
 {
-    Solid,
+    Solid = 1,
     Dash,
     Dot,
     DashDot,
@@ -376,7 +405,7 @@ enum class PdfStrokeStyle
  * Enum to specify the initial information of the
  * info dictionary.
  */
-enum class PdfInfoInitial
+enum class PdfInfoInitial : uint8_t
 {
     None = 0,
     WriteCreationTime = 1,      ///< Write the creation time (current time). Default for new documents
@@ -387,7 +416,7 @@ enum class PdfInfoInitial
 /**
  * Enum for line cap styles when drawing.
  */
-enum class PdfLineCapStyle
+enum class PdfLineCapStyle : uint8_t
 {
     Butt = 0,
     Round = 1,
@@ -397,7 +426,7 @@ enum class PdfLineCapStyle
 /**
  * Enum for line join styles when drawing.
  */
-enum class PdfLineJoinStyle
+enum class PdfLineJoinStyle : uint8_t
 {
     Miter = 0,
     Round = 1,
@@ -407,7 +436,7 @@ enum class PdfLineJoinStyle
 /**
  * Enum for vertical text alignment
  */
-enum class PdfVerticalAlignment
+enum class PdfVerticalAlignment : uint8_t
 {
     Top = 0,
     Center = 1,
@@ -417,7 +446,7 @@ enum class PdfVerticalAlignment
 /**
  * Enum for text alignment
  */
-enum class PdfHorizontalAlignment
+enum class PdfHorizontalAlignment : uint8_t
 {
     Left = 0,
     Center = 1,
@@ -444,6 +473,11 @@ enum class PdfSaveOptions
      */
     NoMetadataUpdate = 16,
     Clean = 32,
+    /** Save the document on a signing operation, instead of
+     * performing an incremental update. It has no effect on
+     * a regular save operation
+     */
+    SaveOnSigning = 64,
 
     /**
       * \deprecated Use NoMetadataUpdate instead
@@ -458,7 +492,7 @@ enum class PdfSaveOptions
  *
  * \see PdfPage
  */
-enum class PdfPageSize
+enum class PdfPageSize : uint8_t
 {
     Unknown = 0,
     A0,              ///< DIN A0
@@ -480,12 +514,11 @@ enum class PdfPageSize
  *
  * \see PdfDocument
  */
-enum class PdfPageMode
+enum class PdfPageMode : uint8_t
 {
-    DontCare,
-    UseNone,
+    UseNone = 1,
     UseThumbs,
-    UseBookmarks,
+    UseOutlines,
     FullScreen,
     UseOC,
     UseAttachments
@@ -498,11 +531,9 @@ enum class PdfPageMode
  *
  * \see PdfDocument
  */
-enum class PdfPageLayout
+enum class PdfPageLayout : uint8_t
 {
-    Ignore,
-    Default,
-    SinglePage,
+    SinglePage = 1,
     OneColumn,
     TwoColumnLeft,
     TwoColumnRight,
@@ -510,7 +541,7 @@ enum class PdfPageLayout
     TwoPageRight
 };
 
-enum class PdfStandard14FontType
+enum class PdfStandard14FontType : uint8_t
 {
     Unknown = 0,
     TimesRoman,
@@ -613,7 +644,7 @@ enum class PdfFieldType : uint32_t
  *  The default value is
  *  PdfHighlightingMode::Invert
  */
-enum class PdfHighlightingMode
+enum class PdfHighlightingMode : uint8_t
 {
     Unknown = 0,
     None,           ///< Do no highlighting
@@ -632,17 +663,44 @@ enum class PdfFieldFlags : uint8_t
 /**
  * Type of the annotation appearance.
  */
-enum class PdfAppearanceType
+enum class PdfAppearanceType : uint8_t
 {
     Normal = 0, ///< Normal appearance
     Rollover,   ///< Rollover appearance; the default is PdfAnnotationAppearance::Normal
     Down        ///< Down appearance; the default is PdfAnnotationAppearance::Normal
 };
 
+enum class PdfResourceType : uint8_t
+{
+    Unknown = 0,
+    ExtGState,
+    ColorSpace,
+    Pattern,
+    Shading,
+    XObject,
+    Font,
+    Properties
+};
+
+enum class PdfKnownNameTree : uint8_t
+{
+    Unknown = 0,
+    Dests,
+    AP,
+    JavaScript,
+    Pages,
+    Templates,
+    IDS,
+    URLS,
+    EmbeddedFiles,
+    AlternatePresentations,
+    Renditions,
+};
+
 /**
  * List of PDF stream content operators
  */
-enum class PdfOperator
+enum class PdfOperator : uint8_t
 {
     Unknown = 0,
     // ISO 32008-1:2008 Table 51 – Operator Categories
@@ -740,8 +798,9 @@ enum class PdfOperator
 /**
  * List of defined Rendering intents
  */
-enum class PdfRenderingIntent
+enum class PdfRenderingIntent : uint8_t
 {
+    Unknown = 0,
     AbsoluteColorimetric,
     RelativeColorimetric,
     Perceptual,
@@ -751,8 +810,9 @@ enum class PdfRenderingIntent
 /**
  * List of defined transparency blending modes
  */
-enum class PdfBlendMode
+enum class PdfBlendMode : uint8_t
 {
+    Unknown = 0,
     Normal,
     Multiply,
     Screen,
@@ -771,26 +831,28 @@ enum class PdfBlendMode
     Luminosity,
 };
 
-enum class PdfSignatureType
+enum class PdfSignatureType : uint8_t
 {
     Unknown = 0,
     PAdES_B = 1,
     Pkcs7 = 2,
 };
 
-enum class PdfEncryptionAlgorithm
+enum class PdfSignatureEncryption : uint8_t
 {
     Unknown = 0,
     RSA,
 };
 
-enum class PdfHashingAlgorithm
+enum class PdfHashingAlgorithm : uint8_t
 {
     Unknown = 0,
     SHA256,
     SHA384,
     SHA512,
 };
+
+using PdfFilterList = std::vector<PdfFilterType>;
 
 };
 

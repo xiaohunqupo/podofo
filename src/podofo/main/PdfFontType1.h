@@ -19,7 +19,7 @@ namespace PoDoFo {
  *  to embed type1 fonts into a PDF file
  *  or to draw with type1 fonts.
  */
-class PdfFontType1 final : public PdfFontSimple
+class PODOFO_API PdfFontType1 final : public PdfFontSimple
 {
     friend class PdfFont;
 
@@ -38,16 +38,7 @@ private:
         const PdfEncoding& encoding);
 
 public:
-    bool SupportsSubsetting() const override;
     PdfFontType GetType() const override;
-
-protected:
-    //void embedFontSubset() override;
-    //void embedFontFile(PdfObject& descriptor) override;
-
-private:
-    //bool FindSeac(const char* buffer, size_t length);
-    //ptrdiff_t FindInBuffer(const char* needle, const char* haystack, size_t len) const;
 };
 
 };

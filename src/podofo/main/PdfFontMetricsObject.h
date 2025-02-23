@@ -19,10 +19,6 @@
 
 namespace PoDoFo {
 
-class PdfArray;
-class PdfObject;
-class PdfVariant;
-
 class PODOFO_API PdfFontMetricsObject final : public PdfFontMetricsBase
 {
 private:
@@ -34,11 +30,7 @@ private:
     PdfFontMetricsObject(const PdfObject& font, const PdfObject* descriptor);
 
 public:
-    static std::unique_ptr<PdfFontMetricsObject> Create(const PdfObject& font, const PdfObject* descriptor = nullptr);
-
-    unsigned GetGlyphCount() const override;
-
-    bool TryGetGlyphWidth(unsigned gid, double& width) const override;
+    static std::unique_ptr<const PdfFontMetricsObject> Create(const PdfObject& font, const PdfObject* descriptor = nullptr);
 
     bool HasUnicodeMapping() const override;
 
@@ -60,9 +52,9 @@ public:
 
     std::string_view GetFontNameRaw() const override;
 
-    std::string_view GetBaseFontName() const override;
-
     std::string_view GetFontFamilyName() const override;
+
+    unsigned char GetSubsetPrefixLength() const override;
 
     PdfFontStretch GetFontStretch() const override;
 
@@ -102,9 +94,13 @@ public:
 
     unsigned GetFontFileLength3() const override;
 
-    const Matrix2D& GetMatrix() const override;
+    const Matrix& GetMatrix() const override;
+
+    bool IsObjectLoaded() const override;
 
 protected:
+    std::string_view GetBaseFontName() const override;
+
     bool getIsBoldHint() const override;
 
     bool getIsItalicHint() const override;
@@ -114,24 +110,26 @@ protected:
     const PdfCIDToGIDMapConstPtr& getCIDToGIDMap() const override;
 
 private:
-    void extractFontHints();
+    void processFontName();
 
     std::vector<double> getBBox(const PdfObject& obj);
 
-    void tryLoadBuiltinCIDToGIDMap();
+    void tryLoadBuiltinTrueTypeCIDToGIDMap();
 
 private:
     std::shared_ptr<charbuff> m_Data;
     PdfCIDToGIDMapConstPtr m_CIDToGIDMap;
     std::vector<double> m_BBox;
-    Matrix2D m_Matrix;
-    std::vector<double> m_Widths;
+    Matrix m_Matrix;
 
     std::string m_FontName;
     std::string m_FontNameRaw;
     std::string m_FontBaseName;
     std::string m_FontFamilyName;
+    unsigned char m_SubsetPrefixLength;
     PdfFontStretch m_FontStretch;
+    bool m_IsItalicHint;
+    bool m_IsBoldHint;
     int m_Weight;
     PdfFontDescriptorFlags m_Flags;
     double m_ItalicAngle;
@@ -147,7 +145,7 @@ private:
     double m_DefaultWidth;
 
     const PdfObject* m_FontFileObject;
-    PdfFontFileType m_FontFileType;
+    nullable<PdfFontFileType> m_FontFileType;
 
     unsigned m_Length1;
     unsigned m_Length2;
@@ -158,9 +156,6 @@ private:
     double m_UnderlinePosition;
     double m_StrikeThroughThickness;
     double m_StrikeThroughPosition;
-
-    bool m_IsItalicHint;
-    bool m_IsBoldHint;
 };
 
 };

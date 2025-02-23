@@ -26,10 +26,8 @@ private:
      *
      *  \param doc the parent document of the XObject
      *  \param rect the size of the XObject
-     *  \param prefix optional prefix for XObject-name
      */
-    PdfXObjectForm(PdfDocument& doc, const Rect& rect,
-        const std::string_view& prefix);
+    PdfXObjectForm(PdfDocument& doc, const Rect& rect);
 
 public:
     /** Create a new XObject from a page of another document
@@ -39,10 +37,6 @@ public:
      *	\param useTrimBox if true try to use trimbox for size of xobject
      */
     void FillFromPage(const PdfPage& page, bool useTrimBox = false);
-
-    /** Ensure resources initialized on this XObject
-     */
-    void EnsureResourcesCreated() override;
 
 public:
     PdfResources& GetOrCreateResources() override;
@@ -56,6 +50,8 @@ public:
      */
     void SetRect(const Rect& rect);
 
+    void SetMatrix(const Matrix& m);
+
 public:
     inline PdfResources* GetResources() { return m_Resources.get(); }
     inline const PdfResources* GetResources() const { return m_Resources.get(); }
@@ -67,12 +63,15 @@ private:
     Rect GetRectRaw() const override;
     PdfObject* getContentsObject() override;
     PdfResources* getResources() override;
-    PdfElement& getElement() override;
-    PdfObjectStream& GetStreamForAppending(PdfStreamAppendFlags flags) override;
+    PdfDictionaryElement& getElement() override;
+    PdfObjectStream& GetOrCreateContentsStream(PdfStreamAppendFlags flags) override;
+    PdfObjectStream& ResetContentsStream() override;
+    void CopyContentsTo(OutputStream& stream) const override;
     void initXObject(const Rect& rect);
     void initAfterPageInsertion(const PdfPage& page);
 
 private:
+    // Remove some PdfCanvas methods to maintain the class API surface clean
     PdfElement& GetElement() = delete;
     const PdfElement& GetElement() const = delete;
     PdfObject* GetContentsObject() = delete;

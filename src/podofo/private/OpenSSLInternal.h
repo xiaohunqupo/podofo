@@ -10,10 +10,22 @@
 
 #include <podofo/main/PdfDeclarations.h>
 
-#include <date/date.h>
+#include <openssl/opensslv.h>
+
+// See https://github.com/openssl/openssl/blob/51caffb5c187bb2c633e0da9f5928fced4fae7ed/include/openssl/e_ostime.h#L32:
+// It appears that recent versions of OpenSSL now unconditionally includes
+// <WinSock2.h>, which includes <Windows.h>. This will cause issues with
+// GetObject() and possibly other macros, so we early workaround them
+#if defined(_WIN32) && (OPENSSL_VERSION_MAJOR > 3 || (OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR >= 2))
+#include "WindowsLeanMean.h"
+#endif
+
 #include <openssl/ssl.h>
 #include <openssl/cms.h>
 #include <openssl/asn1t.h>
+#include <openssl/err.h>
+
+#include <date/date.h>
 
 #if OPENSSL_VERSION_MAJOR < 3
  // Fixes warning when compiling with OpenSSL 3
@@ -45,10 +57,10 @@ namespace ssl
 {
     const EVP_MD* GetEVP_MD(PoDoFo::PdfHashingAlgorithm hashing);
     unsigned GetEVP_Size(PoDoFo::PdfHashingAlgorithm hashing);
-    void AddSigningCertificateV2(CMS_SignerInfo* signer, const PoDoFo::bufferview& hash);
+    void AddSigningCertificateV2(CMS_SignerInfo* signer, const PoDoFo::bufferview& hash, PoDoFo::PdfHashingAlgorithm hashing);
     void ComputeHashToSign(CMS_SignerInfo* si, BIO* chain, bool doWrapDigest, PoDoFo::charbuff& hashToSign);
 
-    // Load a ASN.1 encoded private key
+    // Load a ASN.1 encoded private key (PKCS#1 or PKCS#8 formats supported)
     EVP_PKEY* LoadPrivateKey(const PoDoFo::bufferview& input);
 
     // Sign a buffer with the supplied pkey, no encapsulation and deterministic padding
@@ -75,10 +87,10 @@ namespace ssl
 
     void ComputeHash(const PoDoFo::bufferview& data, PoDoFo::PdfHashingAlgorithm hashing,
         unsigned char* hash, unsigned& length);
-    void ComputeMD5Str(const PoDoFo::bufferview& data,
-        unsigned char* hash, unsigned& length);
-    void ComputeSHA1Str(const PoDoFo::bufferview& data,
-        unsigned char* hash, unsigned& length);
+    void ComputeMD5(const PoDoFo::bufferview& data, unsigned char* hash);
+    void ComputeSHA1(const PoDoFo::bufferview& data, unsigned char* hash);
+
+    void GetOpenSSLError(std::string& err);
 
     const EVP_CIPHER* Rc4();
     const EVP_CIPHER* Aes128();

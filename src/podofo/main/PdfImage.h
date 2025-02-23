@@ -15,19 +15,21 @@
 struct jpeg_decompress_struct;
 #endif // PODOFO_HAVE_JPEG_LIB
 
+struct png_struct_def;
+struct png_info_def;
+
 namespace PoDoFo {
 
-class PdfArray;
 class PdfDocument;
 class InputStream;
 
-struct PdfImageInfo
+struct PODOFO_API PdfImageInfo final
 {
     unsigned Width = 0;
     unsigned Height = 0;
     nullable<PdfFilterList> Filters;
     unsigned char BitsPerComponent = 0;
-    PdfColorSpacePtr ColorSpace;
+    PdfColorSpaceInitializer ColorSpace;
     std::vector<double> DecodeArray;
 };
 
@@ -49,9 +51,8 @@ private:
      *  This is an overloaded constructor.
      *
      *  \param parent parent document
-     *  \param prefix optional prefix for XObject-name
      */
-    PdfImage(PdfDocument& doc, const std::string_view& prefix);
+    PdfImage(PdfDocument& doc);
 
 public:
     void DecodeTo(charbuff& buff, PdfPixelFormat format, int scanLineSize = -1) const;
@@ -60,32 +61,11 @@ public:
 
     charbuff GetDecodedCopy(PdfPixelFormat format);
 
-    /** Set an ICC profile for this image.
-     *
-     *  \param stream an input stream from which the ICC profiles data can be read
-     *  \param colorComponents the number of colorcomponents of the ICC profile
-     *  \param alternateColorSpace an alternate colorspace to use if the ICC profile cannot be used
-     *
-     *  \see SetImageColorSpace to set an colorspace instead of an ICC profile for this image
-     */
-    void SetICCProfile(InputStream& stream, unsigned colorComponents,
-        PdfColorSpaceType alternateColorSpace = PdfColorSpaceType::DeviceRGB);
-
     /** Set a softmask for this image.
      *  \param pSoftmask a PdfImage pointer to the image, which is to be set as softmask, must be 8-Bit-Grayscale
      *
      */
     void SetSoftMask(const PdfImage& softmask);
-
-    /** Get the width of the image when drawn in PDF units
-     *  \returns the width in PDF units
-     */
-    unsigned GetWidth() const;
-
-    /** Get the height of the image when drawn in PDF units
-     *  \returns the height in PDF units
-     */
-    unsigned GetHeight() const;
 
     /** Set the actual image data from a buffer
      *
@@ -124,13 +104,17 @@ public:
      */
     void SetDataRaw(InputStream& stream, const PdfImageInfo& info);
 
-    /** Load the image data from a file
+    /** Load the image data from bytes
+     * \param imageIndex image index to be fed to multi image/page
+     *   formats (eg. TIFF). Ignored by the other formats
      */
-    void Load(const std::string_view& filepath);
+    void Load(const std::string_view& filepath, unsigned imageIndex = 0);
 
     /** Load the image data from bytes
+     * \param imageIndex image index to be fed to multi image/page
+     *   formats (eg. TIFF). Ignored by the other formats
      */
-    void LoadFromBuffer(const bufferview& buffer);
+    void LoadFromBuffer(const bufferview& buffer, unsigned imageIndex = 0);
 
     void ExportTo(charbuff& buff, PdfExportFormat format, PdfArray args = {}) const;
 
@@ -157,7 +141,17 @@ public:
     /** Get the color space of the image
      * \returns the color space of the image
      */
-    const PdfColorSpace& GetColorSpace() const { return *m_ColorSpace; }
+    const PdfColorSpaceFilter& GetColorSpace() const { return *m_ColorSpace; }
+
+    /** Get the width of the image when drawn in PDF units
+     *  \returns the width in PDF units
+     */
+    unsigned GetWidth() const { return m_Width; }
+
+    /** Get the height of the image when drawn in PDF units
+     *  \returns the height in PDF units
+     */
+    unsigned GetHeight() const { return m_Height; }
 
 private:
     /** Construct an image from an existing PdfObject
@@ -184,17 +178,17 @@ private:
 #endif // PODOFO_HAVE_JPEG_LIB
 
 #ifdef PODOFO_HAVE_TIFF_LIB
-    void loadFromTiffHandle(void* handle);
+    void loadFromTiffHandle(void* handle, unsigned imageIndex);
     /** Load the image data from a TIFF file
      *  \param filename
      */
-    void loadFromTiff(const std::string_view& filename);
+    void loadFromTiff(const std::string_view& filename, unsigned imageIndex);
 
     /** Load the image data from TIFF bytes
      *  \param data TIFF bytes
      *  \param len number of bytes
      */
-    void loadFromTiffData(const unsigned char* data, size_t len);
+    void loadFromTiffData(const unsigned char* data, size_t len, unsigned imageIndex);
 #endif // PODOFO_HAVE_TIFF_LIB
 
 #ifdef PODOFO_HAVE_PNG_LIB
@@ -209,10 +203,12 @@ private:
      *  \param len number of bytes
      */
     void loadFromPngData(const unsigned char* data, size_t len);
+
+    static void loadFromPngContent(PdfImage& image, png_struct_def* png, png_info_def* info);
 #endif // PODOFO_HAVE_PNG_LIB
 
 private:
-    PdfColorSpacePtr m_ColorSpace;
+    PdfColorSpaceFilterPtr m_ColorSpace;
     unsigned m_Width;
     unsigned m_Height;
     unsigned m_BitsPerComponent;

@@ -12,10 +12,10 @@
 using namespace std;
 using namespace PoDoFo;
 
-PdfCIDToGIDMap::PdfCIDToGIDMap(CIDToGIDMap&& map, PdfGlyphAccess access)
-    : m_cidToGidMap(std::move(map)), m_access(access) { }
+PdfCIDToGIDMap::PdfCIDToGIDMap(CIDToGIDMap&& map)
+    : m_cidToGidMap(std::move(map)) { }
 
-PdfCIDToGIDMap PdfCIDToGIDMap::Create(const PdfObject& cidToGidMapObj, PdfGlyphAccess access)
+PdfCIDToGIDMap PdfCIDToGIDMap::Create(const PdfObject& cidToGidMapObj)
 {
     CIDToGIDMap map;
     // Table 115 — Entries in a CIDFont dictionary
@@ -25,11 +25,11 @@ PdfCIDToGIDMap PdfCIDToGIDMap::Create(const PdfObject& cidToGidMapObj, PdfGlyphA
     auto buffer = cidToGidMapObj.MustGetStream().GetCopy();
     for (unsigned i = 0, count = (unsigned)buffer.size() / 2; i < count; i++)
     {
-        unsigned gid = (unsigned)buffer[i * 2 + 0] << 8 | (unsigned)buffer[i * 2 + 1];
+        unsigned gid = (unsigned)((uint8_t)buffer[i * 2 + 0] << 8 | (uint8_t)buffer[i * 2 + 1]);
         map[i] = gid;
     }
 
-    return PdfCIDToGIDMap(std::move(map), access);
+    return PdfCIDToGIDMap(std::move(map));
 }
 
 bool PdfCIDToGIDMap::TryMapCIDToGID(unsigned cid, unsigned& gid) const
@@ -48,7 +48,7 @@ bool PdfCIDToGIDMap::TryMapCIDToGID(unsigned cid, unsigned& gid) const
 void PdfCIDToGIDMap::ExportTo(PdfObject& descendantFont)
 {
     auto& cidToGidMap = descendantFont.MustGetDocument().GetObjects().CreateDictionaryObject();
-    descendantFont.GetDictionary().AddKeyIndirect("CIDToGIDMap", cidToGidMap);
+    descendantFont.GetDictionary().AddKeyIndirect("CIDToGIDMap"_n, cidToGidMap);
     auto& stream = cidToGidMap.GetOrCreateStream();
     auto output = stream.GetOutputStream();
     unsigned previousCid = 0;
@@ -67,11 +67,6 @@ void PdfCIDToGIDMap::ExportTo(PdfObject& descendantFont)
         output.Write(entry.data(), 2);
         previousCid = cid;
     }
-}
-
-bool PdfCIDToGIDMap::HasGlyphAccess(PdfGlyphAccess access) const
-{
-    return (m_access & access) != (PdfGlyphAccess)0;
 }
 
 unsigned PdfCIDToGIDMap::GetSize() const

@@ -7,25 +7,23 @@
 #ifndef PDF_FONT_METRICS_H
 #define PDF_FONT_METRICS_H
 
-#include "PdfDeclarations.h"
-
 #include "PdfString.h"
 #include "PdfCMapEncoding.h"
 #include "PdfCIDToGIDMap.h"
+#include <podofo/auxiliary/Matrix.h>
 
 FORWARD_DECLARE_FREETYPE();
 
 namespace PoDoFo {
 
-class PODOFO_API FreeTypeFacePtr final : public std::shared_ptr<FT_FaceRec_>
-{
-public:
-    FreeTypeFacePtr();
-    FreeTypeFacePtr(FT_Face face);
-    FreeTypeFacePtr(const FreeTypeFacePtr&) = default;
-    FreeTypeFacePtr& operator=(const FreeTypeFacePtr&) = default;
-    void reset(FT_Face face = nullptr);
-};
+class PdfFontMetrics;
+
+// NOTE: Underlying type may may change in the future
+using GlyphMetricsListConstPtr = std::shared_ptr<const std::vector<double>>;
+
+/** Convenience typedef for a const PdfEncoding shared ptr
+ */
+using PdfFontMetricsConstPtr = std::shared_ptr<const PdfFontMetrics>;
 
 /**
  * This abstract class provides access to font metrics information.
@@ -37,23 +35,47 @@ class PODOFO_API PdfFontMetrics
 {
     friend class PdfFont;
     friend class PdfFontManager;
+    friend class PdfFontMetricsBase;
     friend class PdfFontMetricsFreetype;
+    PODOFO_PRIVATE_FRIEND(class FontTrueTypeSubset);
 
-protected:
+private:
     PdfFontMetrics();
 
 public:
     virtual ~PdfFontMetrics();
 
-    virtual unsigned GetGlyphCount() const = 0;
+    static std::unique_ptr<const PdfFontMetrics> Create(const std::string_view& filepath, unsigned faceIndex = 0);
 
-    /** Get the width of a single glyph id
+    static std::unique_ptr<const PdfFontMetrics> CreateFromBuffer(const bufferview& buffer, unsigned faceIndex = 0);
+
+    /** Get the glyph count
+     * \remarks By defaults tt returns the actual number of glyphs in the font program
+     */
+    unsigned GetGlyphCount() const;
+
+    /** Get the glyph count with the given glyph access
+     *  \param access the desired access for retrieving the glyph count
+     */
+    unsigned GetGlyphCount(PdfGlyphAccess access) const;
+
+    /** Get the width of a single glyph id. It tries to access parsed pdf metrics first,
+     * and if unavailable it retrieve it from available font program
      *
      *  \param gid id of the glyph
      *  \returns the width of a single glyph id
      */
     double GetGlyphWidth(unsigned gid) const;
-    virtual bool TryGetGlyphWidth(unsigned gid, double& width) const = 0;
+    bool TryGetGlyphWidth(unsigned gid, double& width) const;
+
+    /** Get the width of a single glyph id
+     *
+     *  \param gid id of the glyph
+     *  \param access the desired access for retrieving the metrics
+     *  \returns the width of a single glyph id
+     */
+    double GetGlyphWidth(unsigned gid, PdfGlyphAccess access) const;
+    bool TryGetGlyphWidth(unsigned gid, PdfGlyphAccess access, double& width) const;
 
     /**
      * Some fonts provides a glyph substitution list, eg. for ligatures.
@@ -118,13 +140,6 @@ public:
      */
     bufferview GetOrLoadFontFileData() const;
 
-    /** Get direct access to the internal FreeType handle
-     *
-     *  \returns the internal freetype handle
-     */
-    bool TryGetOrLoadFace(FT_Face& face) const;
-    FT_Face GetOrLoadFace() const;
-
     /** Get the actual font file object from a /FontFile like key, if available
      *
      * For font data coming from a file imported font, see GetFontFileData()
@@ -144,28 +159,6 @@ public:
      */
     virtual unsigned GetFontFileLength3() const = 0;
 
-    /** Get a string with either the actual /BaseFont, /FontName or
-     * /FontFamily name, depending on exsistences of such entries
-     */
-    std::string_view GetFontNameSafe(bool familyFirst = false) const;
-
-    /** Get a semantical base name for the font that can be used to
-     * compose the final name, eg. from "AAAAAA+Arial,Bold" to "Arial"
-     *
-     * The string is constructed either from the actual /BaseFont,
-     * /FontName or /FontFamily name, depending on exsistences of
-     * such entries
-     * \remarks It doesn't correspond to /BaseFont name entry in the font
-     */
-    std::string_view GetBaseFontNameSafe() const;
-
-    /** Get a semantical base name for the font that can be used to
-     * compose the final name, eg. from "AAAAAA+Arial,Bold" to "Arial"
-     *
-     * \remarks It doesn't correspond to /BaseFont name entry in the font
-     */
-    virtual std::string_view GetBaseFontName() const = 0;
-
     /** Get the actual /FontName, eg. "AAAAAA+Arial,Bold", if available
      *
      *  By default returns empty string
@@ -181,6 +174,24 @@ public:
     /** Get the actual /FontFamily, eg. "Times", if available
      */
     virtual std::string_view GetFontFamilyName() const = 0;
+
+    /** Get a family font name, either from /FontFamily or constructed
+     * from available /BaseFont, /FontName (eg. "AAAAAA+Arial,Bold" becomes "Arial")
+     *
+     * \remarks It doesn't correspond to /BaseFont name entry in the font
+     */
+    std::string_view GeFontFamilyNameSafe() const;
+
+    /** Get the length of the subset prefix (eg. 7 for "AAAAAA+") if present
+     */
+    virtual unsigned char GetSubsetPrefixLength() const;
+
+    /**
+     * Get a an approximate PostScript name, from available /BaseFont, /FontName
+     * (eg. "AAAAAA+Arial-Bold" becomes "Arial-Bold")
+     * By default returns GetFontName()
+     */
+    std::string_view GetPostScriptNameRough() const;
 
     virtual PdfFontStretch GetFontStretch() const = 0;
 
@@ -271,13 +282,15 @@ public:
      */
     PdfFontStyle GetStyle() const;
 
+    virtual bool IsObjectLoaded() const;
+
     bool IsStandard14FontMetrics() const;
 
     virtual bool IsStandard14FontMetrics(PdfStandard14FontType& std14Font) const;
 
     /** Returns the matrix mapping glyph space to text space
      */
-    virtual const Matrix2D& GetMatrix() const;
+    virtual const Matrix& GetMatrix() const;
 
     /** Determine if the metrics are for Adobe Type1 like font
      */
@@ -314,6 +327,8 @@ public:
      */
     bool TryGetImplicitEncoding(PdfEncodingMapConstPtr &encoding) const;
 
+    /** Get a CID to font program GID map
+     */
     PdfCIDToGIDMapConstPtr GetCIDToGIDMap() const;
 
 public:
@@ -321,18 +336,46 @@ public:
     unsigned GetFaceIndex() const { return m_FaceIndex; }
 
 protected:
+    /** Get a semantical base name for the font that can be used to
+     * compose the final name, eg. from "AAAAAA+Arial,Bold" to "Arial"
+     *
+     * \remarks It doesn't correspond to /BaseFont name entry in the font
+     */
+    virtual std::string_view GetBaseFontName() const = 0;
+
     virtual const PdfCIDToGIDMapConstPtr& getCIDToGIDMap() const;
     virtual bool getIsBoldHint() const = 0;
     virtual bool getIsItalicHint() const = 0;
     virtual const datahandle& GetFontFileDataHandle() const = 0;
-    virtual const FreeTypeFacePtr& GetFaceHandle() const = 0;
+    virtual FT_Face GetFaceHandle() const = 0;
+
+    virtual unsigned GetGlyphCountFontProgram() const;
+    virtual bool TryGetGlyphWidthFontProgram(unsigned gid, double& width) const;
+
+    bool HasParsedWidths() const;
+
+    /** Retrieve the parsed width from a /W or /Widths entry, if available
+     */
+    GlyphMetricsListConstPtr GetParsedWidths() const { return m_ParsedWidths; }
+
+    void SetParsedWidths(GlyphMetricsListConstPtr&& parsedWidths);
 
 private:
-    void SetFilePath(std::string&& filepath, unsigned faceIndex);
+    static std::unique_ptr<const PdfFontMetrics> CreateFromFile(const std::string_view& filepath, unsigned faceIndex,
+        const PdfFontMetrics* metrics, bool skipNormalization);
 
-private:
-    void initBaseFontNameSafe();
-    static PdfEncodingMapConstPtr getFontType1Encoding(FT_Face face);
+    static std::unique_ptr<const PdfFontMetrics> CreateFromBuffer(const bufferview& buffer, unsigned faceIndex,
+        const PdfFontMetrics* metrics, bool skipNormalization);
+
+    static std::unique_ptr<PdfFontMetrics> CreateFromFace(FT_Face face, std::unique_ptr<charbuff>&& buffer,
+        const PdfFontMetrics* metrics, bool skipNormalization);
+
+    /** Create a new font metrics by merging characteristics from this instance
+     */
+    std::unique_ptr<const PdfFontMetrics> CreateMergedMetrics(bool skipNormalization) const;
+
+    void initFamilyFontNameSafe();
+    static PdfEncodingMapConstPtr getFontType1ImplicitEncoding(FT_Face face);
 
 private:
     PdfFontMetrics(const PdfFontMetrics& rhs) = delete;
@@ -340,31 +383,36 @@ private:
 
 private:
     std::string m_FilePath;
+    std::string m_FamilyFontNameSafe;
+    GlyphMetricsListConstPtr m_ParsedWidths;
     nullable<PdfFontStyle> m_Style;
-    std::unique_ptr<std::string> m_BaseFontNameSafe;
     unsigned m_FaceIndex;
 };
 
 class PODOFO_API PdfFontMetricsBase : public PdfFontMetrics
 {
-protected:
+    friend class PdfFontMetricsStandard14;
+    friend class PdfFontMetricsObject;
+
+private:
     PdfFontMetricsBase();
+
+public:
+    ~PdfFontMetricsBase();
 
 protected:
     const datahandle& GetFontFileDataHandle() const override final;
-    const FreeTypeFacePtr& GetFaceHandle() const override final;
+    FT_Face GetFaceHandle() const override final;
     virtual datahandle getFontFileDataHandle() const = 0;
 
 private:
     bool m_dataInit;
-    datahandle m_Data;
     bool m_faceInit;
-    FreeTypeFacePtr m_Face;
+    datahandle m_Data;
+    FT_Face m_Face;
 };
 
-/** Convenience typedef for a const PdfEncoding shared ptr
- */
-using PdfFontMetricsConstPtr = std::shared_ptr<const PdfFontMetrics> ;
+
 
 };
 

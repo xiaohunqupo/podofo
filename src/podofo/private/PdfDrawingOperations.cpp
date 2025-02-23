@@ -196,6 +196,16 @@ void PoDoFo::WriteOperator_c(PdfStringStream& stream, double c1x, double c1y, do
     stream << c1x << ' ' << c1y << ' ' << c2x << ' ' << c2y << ' ' << x << ' ' << y << " c\n";
 }
 
+void PoDoFo::WriteOperator_y(PdfStringStream& stream, double cx, double cy, double x, double y)
+{
+    stream << cx << ' ' << cy << ' ' << x << ' ' << y << " y\n";
+}
+
+void PoDoFo::WriteOperator_v(PdfStringStream& stream, double cx, double cy, double x, double y)
+{
+    stream << cx << ' ' << cy << ' ' << x << ' ' << y << " v\n";
+}
+
 void PoDoFo::WriteOperator_n(PdfStringStream& stream)
 {
     stream << "n\n";
@@ -322,6 +332,11 @@ void PoDoFo::WriteOperator_Td(PdfStringStream& stream, double tx, double ty)
     stream << tx << ' ' << ty << " Td\n";
 }
 
+void PoDoFo::WriteOperator_TD(PdfStringStream& stream, double tx, double ty)
+{
+    stream << tx << ' ' << ty << " TD\n";
+}
+
 void PoDoFo::WriteOperator_Tm(PdfStringStream& stream, double a, double b, double c, double d, double e, double f)
 {
     stream << a << ' ' << b << ' ' << c << ' ' << d << ' ' << e << ' ' << f << " Tm\n";
@@ -444,46 +459,46 @@ void PoDoFo::WriteOperator_Do(PdfStringStream& stream, const string_view& xobjna
 
 void PoDoFo::WriteOperator_cs(PdfStringStream& stream, PdfColorSpaceType colorSpace)
 {
-    stream << PoDoFo::ColorSpaceToNameRaw(colorSpace) << " cs\n";
+    stream << '/' << PoDoFo::ToString(colorSpace) << " cs\n";
 }
 
 void PoDoFo::WriteOperator_cs(PdfStringStream& stream, const string_view& name)
 {
-    stream << name << " cs\n";
+    stream << '/' << name << " cs\n";
 }
 
 void PoDoFo::WriteOperator_CS(PdfStringStream& stream, PdfColorSpaceType colorSpace)
 {
-    stream << PoDoFo::ColorSpaceToNameRaw(colorSpace) << " CS\n";
+    stream << '/' << PoDoFo::ToString(colorSpace) << " CS\n";
 }
 
 void PoDoFo::WriteOperator_CS(PdfStringStream& stream, const string_view& name)
 {
-    stream << name << " CS\n";
+    stream << '/' << name << " CS\n";
 }
 
 void PoDoFo::WriteOperator_sc(PdfStringStream& stream, const cspan<double>& components)
 {
     writeColorComponents(stream, components);
-    stream << " sc\n";
+    stream << "sc\n";
 }
 
 void PoDoFo::WriteOperator_SC(PdfStringStream& stream, const cspan<double>& components)
 {
     writeColorComponents(stream, components);
-    stream << " SC\n";
+    stream << "SC\n";
 }
 
 void PoDoFo::WriteOperator_scn(PdfStringStream& stream, const cspan<double>& components)
 {
     writeColorComponents(stream, components);
-    stream << " scn\n";
+    stream << "scn\n";
 }
 
 void PoDoFo::WriteOperator_SCN(PdfStringStream& stream, const cspan<double>& components)
 {
     writeColorComponents(stream, components);
-    stream << " SCN\n";
+    stream << "SCN\n";
 }
 
 void PoDoFo::WriteOperator_scn(PdfStringStream& stream, const cspan<double>& components, const string_view& patternName)
@@ -536,6 +551,11 @@ void PoDoFo::WriteOperator_K(PdfStringStream& stream, double cyan, double magent
 void PoDoFo::WriteOperator_k(PdfStringStream& stream, double cyan, double magenta, double yellow, double black)
 {
     stream << cyan << ' ' << magenta << ' ' << yellow << ' ' << black << " k\n";
+}
+
+void PoDoFo::WriteOperator_sh(PdfStringStream& stream, const string_view& shadingDictName)
+{
+    stream << '/' << shadingDictName << " sh\n";
 }
 
 void PoDoFo::WriteOperator_BX(PdfStringStream& stream)
