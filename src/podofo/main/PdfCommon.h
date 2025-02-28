@@ -10,6 +10,8 @@
 
 namespace PoDoFo {
 
+using LogMessageCallback = std::function<void(PdfLogSeverity logSeverity, const std::string_view& msg)>;
+
 class PODOFO_API PdfCommon final
 {
     PdfCommon() = delete;
@@ -33,9 +35,17 @@ public:
      */
     static PdfLogSeverity GetMaxLoggingSeverity();
 
+    // set maximum recursion depth (set to 0 to disable recursion check)
+    static void SetMaxRecursionDepth(unsigned maxRecursionDepth);
+
+    static unsigned GetMaxRecursionDepth();
+
     /** The if the given logging severity enabled or not
      */
     static bool IsLoggingSeverityEnabled(PdfLogSeverity logSeverity);
+
+    static unsigned GetMaxObjectCount();
+    static void SetMaxObjectCount(unsigned maxObjectCount);
 };
 
 }

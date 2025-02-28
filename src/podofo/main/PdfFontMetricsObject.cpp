@@ -21,17 +21,48 @@ using namespace std;
 static PdfFontStretch stretchFromString(const string_view& str);
 
 PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObject* descriptor) :
+    m_SubsetPrefixLength(0),
+    m_IsItalicHint(false),
+    m_IsBoldHint(false),
+    m_HasBBox(false),
+    m_BBox{ },
     m_DefaultWidth(0),
     m_FontFileObject(nullptr),
-    m_FontFileType(PdfFontFileType::Unknown),
     m_Length1(0),
     m_Length2(0),
-    m_Length3(0),
-    m_IsItalicHint(false),
-    m_IsBoldHint(false)
+    m_Length3(0)
 {
     const PdfObject* obj;
-    const PdfName& subType = font.GetDictionary().MustFindKey(PdfName::KeySubtype).GetName();
+    const PdfName& subType = font.GetDictionary().MustFindKey("Subtype").GetName();
+    PdfFontType fontType;
+    bool isSimpleFont;
+    if (subType == "Type1")
+    {
+        fontType = PdfFontType::Type1;
+        isSimpleFont = true;
+    }
+    else if (subType == "TrueType")
+    {
+        fontType = PdfFontType::TrueType;
+        isSimpleFont = true;
+    }
+    else if (subType == "Type3")
+    {
+        fontType = PdfFontType::Type3;
+        isSimpleFont = true;
+    }
+    else if (subType == "CIDFontType0")
+    {
+        fontType = PdfFontType::CIDCFF;
+        isSimpleFont = false;
+    }
+    else if (subType == "CIDFontType2")
+    {
+        fontType = PdfFontType::CIDTrueType;
+        isSimpleFont = false;
+    }
+    else
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedFontFormat, subType.GetString());
 
     // Set a default identity matrix. Widths are normally in
     // thousands of a unit of text space
@@ -39,17 +70,9 @@ PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObjec
 
     // /FirstChar /LastChar /Widths are in the Font dictionary and not in the FontDescriptor
     double missingWidthRaw = 0;
-    if (subType == "Type1" || subType == "Type3" || subType == "TrueType")
+    if (isSimpleFont)
     {
-        if (subType == "Type1")
-        {
-            m_FontFileType = PdfFontFileType::Type1;
-        }
-        else if (subType == "TrueType")
-        {
-            m_FontFileType = PdfFontFileType::TrueType;
-        }
-        else if (subType == "Type3")
+        if (fontType == PdfFontType::Type3)
         {
             // Type3 fonts don't have a /FontFile entry
             m_FontFileType = PdfFontFileType::Type3;
@@ -57,13 +80,16 @@ PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObjec
 
         if (descriptor == nullptr)
         {
-            if (m_FontFileType == PdfFontFileType::Type3)
+            if (fontType == PdfFontType::Type3)
             {
                 if ((obj = font.GetDictionary().FindKey("Name")) != nullptr)
                     m_FontNameRaw = obj->GetName().GetString();
 
                 if ((obj = font.GetDictionary().FindKey("FontBBox")) != nullptr)
+                {
                     m_BBox = getBBox(*obj);
+                    m_HasBBox = true;
+                }
             }
             else
             {
@@ -76,114 +102,82 @@ PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObjec
                 m_FontNameRaw = obj->GetName().GetString();
 
             if ((obj = descriptor->GetDictionary().FindKey("FontBBox")) != nullptr)
+            {
                 m_BBox = getBBox(*obj);
+                m_HasBBox = true;
+            }
 
-            if (m_FontFileType == PdfFontFileType::Type1)
+            if (fontType == PdfFontType::Type1)
             {
                 m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile");
             }
-            else if (m_FontFileType == PdfFontFileType::TrueType)
+            else if (fontType == PdfFontType::TrueType)
             {
                 m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile2");
-                // Try to eagerly load a built-in CIDToGID map, if needed
-                // NOTE: This has to be done after having retrieved
-                // the font file object
-                if (!font.GetDictionary().HasKey("Encoding"))
-                    tryLoadBuiltinCIDToGIDMap();
             }
 
-            if (m_FontFileType != PdfFontFileType::Type3 && m_FontFileObject == nullptr)
-            {
+            if (fontType != PdfFontType::Type3 && m_FontFileObject == nullptr)
                 m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile3");
-                if (m_FontFileObject != nullptr)
-                {
-                    auto fontFileSubtype = m_FontFileObject->GetDictionary().FindKeyAs<PdfName>(PdfName::KeySubtype);
-                    if (m_FontFileType == PdfFontFileType::Type1)
-                    {
-                        if (fontFileSubtype == "Type1C")
-                            m_FontFileType = PdfFontFileType::Type1CCF;
-                        else if (fontFileSubtype == "OpenType")
-                            m_FontFileType = PdfFontFileType::OpenType;
-                    }
-                    else if (m_FontFileType == PdfFontFileType::TrueType && fontFileSubtype == "OpenType")
-                    {
-                        m_FontFileType = PdfFontFileType::OpenType;
-                    }
-                }
-            }
 
             missingWidthRaw = descriptor->GetDictionary().FindKeyAs<double>("MissingWidth", 0);
         }
 
         const PdfObject* fontmatrix = nullptr;
-        if (m_FontFileType == PdfFontFileType::Type3 && (fontmatrix = font.GetDictionary().FindKey("FontMatrix")) != nullptr)
+        if (fontType == PdfFontType::Type3 && (fontmatrix = font.GetDictionary().FindKey("FontMatrix")) != nullptr)
         {
             // Type3 fonts have a custom /FontMatrix
             auto& fontmatrixArr = fontmatrix->GetArray();
-            for (int i = 0; i < 6; i++)
-                m_Matrix[i] = fontmatrixArr[i].GetReal();
+            m_Matrix = Matrix::FromArray(fontmatrixArr);
         }
 
         // Set the default width accordingly to possibly existing
         // /MissingWidth and /FontMatrix
         m_DefaultWidth = missingWidthRaw * m_Matrix[0];
 
-        auto widths = font.GetDictionary().FindKey("Widths");
-        if (widths != nullptr)
+        auto widthsObj = font.GetDictionary().FindKey("Widths");
+        if (widthsObj != nullptr)
         {
-            auto& arrWidths = widths->GetArray();
-            m_Widths.reserve(arrWidths.size());
+            auto& arrWidths = widthsObj->GetArray();
+            vector<double> widths;
+            widths.reserve(arrWidths.size());
             for (auto& width : arrWidths)
-                m_Widths.push_back(width.GetReal() * m_Matrix[0]);
+                widths.push_back(width.GetReal() * m_Matrix[0]);
+
+            SetParsedWidths(std::make_shared<vector<double>>(std::move(widths)));
         }
     }
-    else if (subType == "CIDFontType0" || subType == "CIDFontType2")
+    else
     {
         if (descriptor == nullptr)
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::NoObject, "Missing descriptor for CID ont");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "Missing descriptor for CID ont");
 
         if ((obj = descriptor->GetDictionary().FindKey("FontName")) != nullptr)
             m_FontNameRaw = obj->GetName().GetString();
 
         if ((obj = descriptor->GetDictionary().FindKey("FontBBox")) != nullptr)
+        {
             m_BBox = getBBox(*obj);
-
-        if (subType == "CIDFontType0"
-            && (m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile")) != nullptr)
-        {
-            m_FontFileType = PdfFontFileType::Type1;
+            m_HasBBox = true;
         }
-        else if (subType == "CIDFontType2"
-            && (m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile2")) != nullptr)
+
+        if (fontType == PdfFontType::CIDCFF)
         {
-            m_FontFileType = PdfFontFileType::TrueType;
+            m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile3");
+            if (m_FontFileObject == nullptr)
+                m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile");
+        }
+        else if (fontType == PdfFontType::CIDTrueType)
+        {
+            m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile2");
+            if (m_FontFileObject == nullptr)
+                m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile3");
 
             const PdfObject* cidToGidMapObj;
             const PdfObjectStream* stream;
             if ((cidToGidMapObj = font.GetDictionary().FindKey("CIDToGIDMap")) != nullptr
                 && (stream = cidToGidMapObj->GetStream()) != nullptr)
             {
-                m_CIDToGIDMap.reset(new PdfCIDToGIDMap(PdfCIDToGIDMap::Create(*cidToGidMapObj, PdfGlyphAccess::Width | PdfGlyphAccess::FontProgram)));
-            }
-        }
-
-        if (m_FontFileObject == nullptr)
-        {
-            m_FontFileObject = descriptor->GetDictionary().FindKey("FontFile3");
-            if (m_FontFileObject != nullptr)
-            {
-                auto fontFileSubtype = m_FontFileObject->GetDictionary().FindKeyAs<PdfName>(PdfName::KeySubtype);
-                if (subType == "CIDFontType0")
-                {
-                    if (fontFileSubtype == "CIDFontType0C")
-                        m_FontFileType = PdfFontFileType::CIDType1;
-                    else if (fontFileSubtype == "OpenType")
-                        m_FontFileType = PdfFontFileType::OpenType;
-                }
-                else if (subType == "CIDFontType2" && fontFileSubtype == "OpenType")
-                {
-                    m_FontFileType = PdfFontFileType::OpenType;
-                }
+                m_CIDToGIDMap.reset(new PdfCIDToGIDMap(PdfCIDToGIDMap::Create(*cidToGidMapObj)));
             }
         }
 
@@ -195,53 +189,53 @@ PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObjec
         }
 
         m_DefaultWidth = font.GetDictionary().FindKeyAs<double>("DW", 1000.0) * m_Matrix[0];
-        auto widths = font.GetDictionary().FindKey("W");
-        if (widths != nullptr)
+        auto widthsObj = font.GetDictionary().FindKey("W");
+        if (widthsObj != nullptr)
         {
             // "W" array format is described in Pdf 32000:2008 "9.7.4.3
             // Glyph Metrics in CIDFonts"
-            PdfArray widthsArr = widths->GetArray();
+            auto& widthsArr = widthsObj->GetArray();
             unsigned pos = 0;
+            vector<double> widths;
             while (pos < widthsArr.GetSize())
             {
                 unsigned start = (unsigned)widthsArr[pos++].GetNumberLenient();
-                PdfObject* second = &widthsArr[pos];
+                auto second = &widthsArr[pos];
                 if (second->IsReference())
                 {
                     // second do not have an associated owner; use the one in pw
-                    second = &widths->GetDocument()->GetObjects().MustGetObject(second->GetReference());
+                    second = &widthsObj->GetDocument()->GetObjects().MustGetObject(second->GetReference());
                     PODOFO_ASSERT(!second->IsNull());
                 }
-                if (second->IsArray())
-                {
-                    PdfArray arr = second->GetArray();
-                    pos++;
-                    unsigned length = start + arr.GetSize();
-                    PODOFO_ASSERT(length >= start);
-                    if (length > m_Widths.size())
-                        m_Widths.resize(length, m_DefaultWidth);
 
-                    for (unsigned i = 0; i < arr.GetSize(); i++)
-                        m_Widths[start + i] = arr[i].GetReal() * m_Matrix[0];
+                const PdfArray* arr;
+                if (second->TryGetArray(arr))
+                {
+                    pos++;
+                    unsigned length = start + arr->GetSize();
+                    PODOFO_ASSERT(length >= start);
+                    if (length > widths.size())
+                        widths.resize(length, m_DefaultWidth);
+
+                    for (unsigned i = 0; i < arr->GetSize(); i++)
+                        widths[start + i] = (*arr)[i].GetReal() * m_Matrix[0];
                 }
                 else
                 {
                     unsigned end = (unsigned)widthsArr[pos++].GetNumberLenient();
                     unsigned length = end + 1;
                     PODOFO_ASSERT(length >= start);
-                    if (length > m_Widths.size())
-                        m_Widths.resize(length, m_DefaultWidth);
+                    if (length > widths.size())
+                        widths.resize(length, m_DefaultWidth);
 
                     double width = widthsArr[pos++].GetReal() * m_Matrix[0];
                     for (unsigned i = start; i <= end; i++)
-                        m_Widths[i] = width;
+                        widths[i] = width;
                 }
             }
+
+            SetParsedWidths(std::make_shared<vector<double>>(std::move(widths)));
         }
-    }
-    else
-    {
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedFontFormat, subType.GetEscapedName());
     }
 
     if (descriptor == nullptr)
@@ -297,23 +291,50 @@ PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObjec
                 m_FontStretch = PdfFontStretch::Unknown;
         }
 
-        // NOTE: Found a valid document with "/FontWeight 400.0" so just read the value as double
-        m_Weight = static_cast<int>(dict.FindKeyAs<double>("FontWeight", -1));
-        m_Flags = (PdfFontDescriptorFlags)dict.FindKeyAs<int64_t>("Flags", 0);
-        m_ItalicAngle = static_cast<int>(dict.FindKeyAs<double>("ItalicAngle", 0));
-        m_Ascent = dict.FindKeyAs<double>("Ascent", 0) * m_Matrix[3];
-        m_Descent = dict.FindKeyAs<double>("Descent", 0) * m_Matrix[3];
-        m_Leading = dict.FindKeyAs<double>("Leading", -1) * m_Matrix[3];
-        m_CapHeight = dict.FindKeyAs<double>("CapHeight", 0) * m_Matrix[3];
-        m_XHeight = dict.FindKeyAs<double>("XHeight", 0) * m_Matrix[3];
+        int64_t num;
+        if (dict.TryFindKeyAs("Flags", num))
+            m_Flags = (PdfFontDescriptorFlags)num;
+
+        if (!dict.TryFindKeyAs("ItalicAngle", m_ItalicAngle))
+            m_ItalicAngle = numeric_limits<double>::quiet_NaN();
+
+        if (dict.TryFindKeyAs("Ascent", m_Ascent))
+            m_Ascent *= m_Matrix[3];
+        else
+            m_Ascent = numeric_limits<double>::quiet_NaN();
+
+        // ISO 32000-2:2020 "The value shall be a negative number"
+        if (dict.TryFindKeyAs("Descent", m_Descent) && m_Descent < 0)
+            m_Descent *= m_Matrix[3];
+        else
+            m_Descent = numeric_limits<double>::quiet_NaN();
+
+        if (dict.TryFindKeyAs("CapHeight", m_CapHeight))
+            m_CapHeight *= m_Matrix[3];
+        else
+            m_CapHeight = numeric_limits<double>::quiet_NaN();
+
+        // ISO 32000-2:2020 "The value shall be a negative number"
         // NOTE: StemV is measured horizzontally, StemH vertically
-        m_StemV = dict.FindKeyAs<double>("StemV", 0) * m_Matrix[0];
+        if (dict.TryFindKeyAs("StemV", m_StemV) && m_StemV >= 0)
+            m_StemV *= m_Matrix[0];
+        else
+            m_StemV = numeric_limits<double>::quiet_NaN();
+
+        // NOTE1: If missing we store the following values as
+        // negative. Default value handling is done in PdfFontMetrics
+        // NOTE2: Found a document with "/FontWeight 400.0"
+        // which is parsed correctly by Adobe Acrobat so just
+        // read the value as double
+        m_Weight = static_cast<short>(dict.FindKeyAs<double>("FontWeight", -1));
+        m_Leading = dict.FindKeyAs<double>("Leading", -1) * m_Matrix[3];
+        m_XHeight = dict.FindKeyAs<double>("XHeight", -1) * m_Matrix[3];
         m_StemH = dict.FindKeyAs<double>("StemH", -1) * m_Matrix[3];
         m_AvgWidth = dict.FindKeyAs<double>("AvgWidth", -1) * m_Matrix[0];
         m_MaxWidth = dict.FindKeyAs<double>("MaxWidth", -1) * m_Matrix[0];
     }
 
-    // According to ISO 32000-1:2008, /FontName "shall be the
+    // According to ISO 32000-2:2020, /FontName "shall be the
     // same as the value of /BaseFont in the font or CIDFont
     // dictionary that refers to this font descriptor".
     // We prioritize /BaseFont, over /FontName
@@ -342,6 +363,18 @@ PdfFontMetricsObject::PdfFontMetricsObject(const PdfObject& font, const PdfObjec
         }
     }
 
+    if (fontType == PdfFontType::TrueType)
+    {
+        // Try to eagerly load a built-in CIDToGID map, if needed
+        // See condition ISO 32000-2:2020 "When the font has no Encoding entry,
+        // or the font descriptor’s Symbolic flag is set (in which case the Encoding entry is ignored)"
+        if (!font.GetDictionary().HasKey("Encoding")
+            || (m_Flags != nullptr && (*m_Flags & PdfFontDescriptorFlags::Symbolic) != PdfFontDescriptorFlags::None))
+        {
+            tryLoadBuiltinTrueTypeCIDToGIDMap();
+        }
+    }
+
     m_LineSpacing = m_Ascent + m_Descent;
 
     // Try to fine some sensible values
@@ -363,13 +396,19 @@ string_view PdfFontMetricsObject::GetFontNameRaw() const
 
 string_view PdfFontMetricsObject::GetBaseFontName() const
 {
-    const_cast<PdfFontMetricsObject&>(*this).extractFontHints();
+    const_cast<PdfFontMetricsObject&>(*this).processFontName();
     return m_FontBaseName;
 }
 
 string_view PdfFontMetricsObject::GetFontFamilyName() const
 {
     return m_FontFamilyName;
+}
+
+unsigned char PdfFontMetricsObject::GetSubsetPrefixLength() const
+{
+    const_cast<PdfFontMetricsObject&>(*this).processFontName();
+    return m_SubsetPrefixLength;
 }
 
 PdfFontStretch PdfFontMetricsObject::GetFontStretch() const
@@ -379,34 +418,21 @@ PdfFontStretch PdfFontMetricsObject::GetFontStretch() const
 
 PdfFontFileType PdfFontMetricsObject::GetFontFileType() const
 {
-    return m_FontFileType;
+    if (m_FontFileType.has_value())
+        return *m_FontFileType;
+
+    auto face = GetFaceHandle();
+    PdfFontFileType type;
+    if (face == nullptr || !FT::TryGetFontFileFormat(face, type))
+        type = PdfFontFileType::Unknown;
+
+    const_cast<PdfFontMetricsObject&>(*this).m_FontFileType = type;
+    return type;
 }
 
-void PdfFontMetricsObject::GetBoundingBox(vector<double>& bbox) const
-{
-    bbox = m_BBox;
-}
-
-unique_ptr<PdfFontMetricsObject> PdfFontMetricsObject::Create(const PdfObject& font, const PdfObject* descriptor)
+unique_ptr<const PdfFontMetricsObject> PdfFontMetricsObject::Create(const PdfObject& font, const PdfObject* descriptor)
 {
     return unique_ptr<PdfFontMetricsObject>(new PdfFontMetricsObject(font, descriptor));
-}
-
-unsigned PdfFontMetricsObject::GetGlyphCount() const
-{
-    return (unsigned)m_Widths.size();
-}
-
-bool PdfFontMetricsObject::TryGetGlyphWidth(unsigned gid, double& width) const
-{
-    if (gid >= m_Widths.size())
-    {
-        width = -1;
-        return false;
-    }
-
-    width = m_Widths[gid];
-    return true;
 }
 
 bool PdfFontMetricsObject::HasUnicodeMapping() const
@@ -425,9 +451,82 @@ bool PdfFontMetricsObject::TryGetGID(char32_t codePoint, unsigned& gid) const
     return false;
 }
 
-PdfFontDescriptorFlags PdfFontMetricsObject::GetFlags() const
+bool PdfFontMetricsObject::TryGetFlags(PdfFontDescriptorFlags& value) const
 {
-    return m_Flags;
+    if (m_Flags == nullptr)
+    {
+        value = PdfFontDescriptorFlags::None;
+        return false;
+    }
+
+    value = *m_Flags;
+    return true;
+}
+
+bool PdfFontMetricsObject::TryGetBoundingBox(array<double, 4>& value) const
+{
+    value = m_BBox;
+    return m_HasBBox;
+}
+
+bool PdfFontMetricsObject::TryGetItalicAngle(double& value) const
+{
+    if (std::isnan(m_ItalicAngle))
+    {
+        value = 0;
+        return false;
+    }
+
+    value = m_ItalicAngle;
+    return true;
+}
+
+bool PdfFontMetricsObject::TryGetAscent(double& value) const
+{
+    if (std::isnan(m_Ascent))
+    {
+        value = 0;
+        return false;
+    }
+
+    value = m_Ascent;
+    return true;
+}
+
+bool PdfFontMetricsObject::TryGetDescent(double& value) const
+{
+    if (std::isnan(m_Descent))
+    {
+        value = 0;
+        return false;
+    }
+
+    value = m_Descent;
+    return true;
+}
+
+bool PdfFontMetricsObject::TryGetCapHeight(double& value) const
+{
+    if (std::isnan(m_CapHeight))
+    {
+        value = 0;
+        return false;
+    }
+
+    value = m_CapHeight;
+    return true;
+}
+
+bool PdfFontMetricsObject::TryGetStemV(double& value) const
+{
+    if (std::isnan(m_StemV))
+    {
+        value = 0;
+        return false;
+    }
+
+    value = m_StemV;
+    return true;
 }
 
 double PdfFontMetricsObject::GetDefaultWidthRaw() const
@@ -460,16 +559,6 @@ double PdfFontMetricsObject::GetStrikeThroughThickness() const
     return m_StrikeThroughThickness;
 }
 
-double PdfFontMetricsObject::GetAscent() const
-{
-    return m_Ascent;
-}
-
-double PdfFontMetricsObject::GetDescent() const
-{
-    return m_Descent;
-}
-
 double PdfFontMetricsObject::GetLeadingRaw() const
 {
     return m_Leading;
@@ -480,19 +569,9 @@ int PdfFontMetricsObject::GetWeightRaw() const
     return m_Weight;
 }
 
-double PdfFontMetricsObject::GetCapHeight() const
-{
-    return m_CapHeight;
-}
-
 double PdfFontMetricsObject::GetXHeightRaw() const
 {
     return m_XHeight;
-}
-
-double PdfFontMetricsObject::GetStemV() const
-{
-    return m_StemV;
 }
 
 double PdfFontMetricsObject::GetStemHRaw() const
@@ -510,25 +589,25 @@ double PdfFontMetricsObject::GetMaxWidthRaw() const
     return m_MaxWidth;
 }
 
-double PdfFontMetricsObject::GetItalicAngle() const
-{
-    return m_ItalicAngle;
-}
-
-const Matrix2D& PdfFontMetricsObject::GetMatrix() const
+const Matrix& PdfFontMetricsObject::GetMatrix() const
 {
     return m_Matrix;
 }
 
+bool PdfFontMetricsObject::IsObjectLoaded() const
+{
+    return true;
+}
+
 bool PdfFontMetricsObject::getIsBoldHint() const
 {
-    const_cast<PdfFontMetricsObject&>(*this).extractFontHints();
+    const_cast<PdfFontMetricsObject&>(*this).processFontName();
     return m_IsBoldHint;
 }
 
 bool PdfFontMetricsObject::getIsItalicHint() const
 {
-    const_cast<PdfFontMetricsObject&>(*this).extractFontHints();
+    const_cast<PdfFontMetricsObject&>(*this).processFontName();
     return m_IsItalicHint;
 }
 
@@ -566,24 +645,24 @@ unsigned PdfFontMetricsObject::GetFontFileLength3() const
     return m_Length3;
 }
 
-void PdfFontMetricsObject::extractFontHints()
+void PdfFontMetricsObject::processFontName()
 {
     if (m_FontBaseName.length() != 0)
         return;
 
     PODOFO_ASSERT(m_FontName.length() != 0);
-    m_FontBaseName = PoDoFo::ExtractFontHints(m_FontName, m_IsItalicHint, m_IsBoldHint);
+    m_SubsetPrefixLength = PoDoFo::GetSubsetPrefixLength(m_FontName);
+    m_FontBaseName = PoDoFo::ExtractFontHints(string_view(m_FontName).substr(m_SubsetPrefixLength), m_IsItalicHint, m_IsBoldHint);
 }
 
-vector<double> PdfFontMetricsObject::getBBox(const PdfObject& obj)
+array<double, 4> PdfFontMetricsObject::getBBox(const PdfObject& obj)
 {
-    vector<double> ret;
-    ret.reserve(4);
+    array<double, 4> ret;
     auto& arr = obj.GetArray();
-    ret.push_back(arr[0].GetNumberLenient() * m_Matrix[0]);
-    ret.push_back(arr[1].GetNumberLenient() * m_Matrix[3]);
-    ret.push_back(arr[2].GetNumberLenient() * m_Matrix[0]);
-    ret.push_back(arr[3].GetNumberLenient() * m_Matrix[3]);
+    ret[0] = arr[0].GetNumberLenient() * m_Matrix[0];
+    ret[1] = arr[1].GetNumberLenient() * m_Matrix[3];
+    ret[2] = arr[2].GetNumberLenient() * m_Matrix[0];
+    ret[3] = arr[3].GetNumberLenient() * m_Matrix[3];
     return ret;
 }
 
@@ -611,47 +690,56 @@ PdfFontStretch stretchFromString(const string_view& str)
         return PdfFontStretch::Unknown;
 }
 
-void PdfFontMetricsObject::tryLoadBuiltinCIDToGIDMap()
+void PdfFontMetricsObject::tryLoadBuiltinTrueTypeCIDToGIDMap()
 {
-    FT_Face face;
-    if (TryGetOrLoadFace(face) && face->num_charmaps != 0)
+    auto face = GetFaceHandle();
+    if (face == nullptr || face->num_charmaps == 0)
+        return;
+
+    CIDToGIDMap map;
+
+    // ISO 32000-1:2008 "9.6.6.4 Encodings for TrueType Fonts"
+    // "A TrueType font program’s built-in encoding maps directly
+    // from character codes to glyph descriptions by means of an
+    // internal data structure called a 'cmap' "
+    FT_Error rc;
+    FT_ULong code;
+    FT_UInt index;
+
+    if (FT_Select_Charmap(m_Face, FT_ENCODING_MS_SYMBOL) == 0)
     {
-        CIDToGIDMap map;
-
-        // ISO 32000-1:2008 "9.6.6.4 Encodings for TrueType Fonts"
-        // "A TrueType font program’s built-in encoding maps directly
-        // from character codes to glyph descriptions by means of an
-        // internal data structure called a 'cmap' "
-        FT_Error rc;
-        FT_ULong code;
-        FT_UInt index;
-
-        rc = FT_Set_Charmap(face, face->charmaps[0]);
-        CHECK_FT_RC(rc, FT_Set_Charmap);
-
-        if (face->charmap->encoding == FT_ENCODING_MS_SYMBOL)
+        code = FT_Get_First_Char(face, &index);
+        while (index != 0)
         {
-            code = FT_Get_First_Char(face, &index);
-            while (index != 0)
-            {
-                // "If the font contains a (3, 0) subtable, the range of character
-                // codes shall be one of these: 0x0000 - 0x00FF,
-                // 0xF000 - 0xF0FF, 0xF100 - 0xF1FF, or 0xF200 - 0xF2FF"
-                // NOTE: we just take the first byte
-                map.insert({ (unsigned)(code & 0xFF), index });
-                code = FT_Get_Next_Char(face, code, &index);
-            }
+            // "If the font contains a (3, 0) subtable, the range of character
+            // codes shall be one of these: 0x0000 - 0x00FF,
+            // 0xF000 - 0xF0FF, 0xF100 - 0xF1FF, or 0xF200 - 0xF2FF"
+            // NOTE: we just take the first byte
+            map.insert({ (unsigned)(code & 0xFF), index });
+            code = FT_Get_Next_Char(face, code, &index);
         }
-        else
-        {
-            code = FT_Get_First_Char(face, &index);
-            while (index != 0)
-            {
-                map.insert({ (unsigned)code, index });
-                code = FT_Get_Next_Char(face, code, &index);
-            }
-        }
-
-        m_CIDToGIDMap.reset(new PdfCIDToGIDMap(std::move(map), PdfGlyphAccess::FontProgram));
     }
+    else
+    {
+        // "Otherwise, if the font contains a (1, 0) subtable, single bytes
+        // from the string shall be used to look  up the associated glyph
+        // descriptions from the subtable"
+        if (FT_Select_Charmap(m_Face, FT_ENCODING_APPLE_ROMAN) != 0)
+        {
+            // "If a character cannot be mapped in any of the ways described previously,
+            // a PDF processor may supply a mapping of its choosing"
+            // NOTE: We just pick the first cmap
+            rc = FT_Set_Charmap(face, face->charmaps[0]);
+            CHECK_FT_RC(rc, FT_Set_Charmap);
+        }
+
+        code = FT_Get_First_Char(face, &index);
+        while (index != 0)
+        {
+            map.insert({ (unsigned)code, index });
+            code = FT_Get_Next_Char(face, code, &index);
+        }
+    }
+
+    m_CIDToGIDMap.reset(new PdfCIDToGIDMap(std::move(map)));
 }

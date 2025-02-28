@@ -54,7 +54,7 @@ void HelloWorld(const string_view& filename)
         // 
         // You have to pass only one argument, i.e. the page size of the page to create.
         // There are predefined enums for some common page sizes.
-        auto& page = document.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+        auto& page = document.GetPages().CreatePage(PdfPageSize::A4);
 
         // If the page cannot be created because of an error (e.g. ePdfError_OutOfMemory )
         // a nullptr pointer is returned.
@@ -113,7 +113,7 @@ void HelloWorld(const string_view& filename)
         document.Save(filename);
 
     }
-    catch (PdfError& e)
+    catch (PdfError&)
     {
         // All PoDoFo methods may throw exceptions
         // make sure that painter.FinishPage() is called
@@ -127,7 +127,7 @@ void HelloWorld(const string_view& filename)
             // Ignore errors this time
         }
 
-        throw e;
+        throw;
     }
 }
 
@@ -205,8 +205,8 @@ const char* GetBase14FontName(unsigned i)
 void DrawRedFrame(PdfPainter& painter, double x, double y, double width, double height)
 {
     // draw red box
-    painter.GraphicsState.SetFillColor(PdfColor(1.0f, 0.0f, 0.0f));
-    painter.GraphicsState.SetStrokeColor(PdfColor(1.0f, 0.0f, 0.0f));
+    painter.GraphicsState.SetNonStrokingColor(PdfColor(1.0f, 0.0f, 0.0f));
+    painter.GraphicsState.SetStrokingColor(PdfColor(1.0f, 0.0f, 0.0f));
     painter.DrawLine(x, y, x + width, y);
     if (height > 0.0f)
     {
@@ -215,8 +215,8 @@ void DrawRedFrame(PdfPainter& painter, double x, double y, double width, double 
         painter.DrawLine(x, y + height, x + width, y + height);
     }
     // restore to black
-    painter.GraphicsState.SetFillColor(PdfColor(0.0f, 0.0f, 0.0f));
-    painter.GraphicsState.SetStrokeColor(PdfColor(0.0f, 0.0f, 0.0f));
+    painter.GraphicsState.SetNonStrokingColor(PdfColor(0.0f, 0.0f, 0.0f));
+    painter.GraphicsState.SetStrokingColor(PdfColor(0.0f, 0.0f, 0.0f));
 }
 
 void DemoBase14Fonts(PdfPainter& painter, PdfPage& page, PdfDocument& document)

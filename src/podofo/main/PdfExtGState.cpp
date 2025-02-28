@@ -7,78 +7,35 @@
 #include <podofo/private/PdfDeclarationsPrivate.h>
 #include "PdfExtGState.h"
 
-#include "PdfDictionary.h"
-#include "PdfWriter.h"
-#include "PdfStringStream.h"
-#include "PdfPage.h"
+#include "PdfDocument.h"
 
 using namespace std;
 using namespace PoDoFo;
 
-PdfExtGState::PdfExtGState(PdfDocument& doc)
-    : PdfDictionaryElement(doc, "ExtGState")
+PdfExtGState::PdfExtGState(PdfDocument& doc, const PdfExtGStateDefinitionPtr& definition)
+    : PdfDictionaryElement(doc, "ExtGState"_n), m_Definition(definition)
 {
-    PdfStringStream out;
+    if (definition == nullptr)
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "The definition must be non null");
 
-    // Implementation note: the identifier is always
-    // Prefix+ObjectNo. Prefix is /Ft for fonts.
-    out << "ExtGS" << this->GetObject().GetIndirectReference().ObjectNumber();
-    m_Identifier = PdfName(out.GetString());
+    if (definition->NonStrokingAlpha != nullptr)
+        GetDictionary().AddKey("ca"_n, *definition->NonStrokingAlpha);
 
-    this->Init();
-}
+    if (definition->StrokingAlpha != nullptr)
+        GetDictionary().AddKey("CA"_n, *definition->StrokingAlpha);
 
-void PdfExtGState::Init()
-{
-}
+    if (definition->BlendMode != nullptr)
+        GetDictionary().AddKey("BM"_n, PdfName(PoDoFo::ToString(*definition->BlendMode)));
 
-void PdfExtGState::SetFillOpacity(double opac)
-{
-    this->GetObject().GetDictionary().AddKey("ca", PdfVariant(opac));
-}
+    if (definition->RenderingIntent != nullptr)
+        GetDictionary().AddKey("RI"_n, PdfName(PoDoFo::ToString(*definition->RenderingIntent)));
 
-void PdfExtGState::SetStrokeOpacity(double opac)
-{
-    this->GetObject().GetDictionary().AddKey("CA", PdfVariant(opac));
-}
+    if ((definition->OverprintControl & PdfOverprintEnablement::NonStroking) != PdfOverprintEnablement::None)
+        GetDictionary().AddKey("op"_n, true);
 
-void PdfExtGState::SetBlendMode(const string_view& blendMode)
-{
-    this->GetObject().GetDictionary().AddKey("BM", PdfName(blendMode));
-}
+    if ((definition->OverprintControl & PdfOverprintEnablement::Stroking) != PdfOverprintEnablement::None)
+        GetDictionary().AddKey("OP"_n, true);
 
-void PdfExtGState::SetOverprint(bool enable)
-{
-    this->GetObject().GetDictionary().AddKey("OP", PdfVariant(enable));
-}
-
-void PdfExtGState::SetFillOverprint(bool enable)
-{
-    this->GetObject().GetDictionary().AddKey("op", PdfVariant(enable));
-}
-
-void PdfExtGState::SetStrokeOverprint(bool enable)
-{
-    this->GetObject().GetDictionary().AddKey("OP", PdfVariant(enable));
-}
-
-void PdfExtGState::SetNonZeroOverprint(bool enable)
-{
-    this->GetObject().GetDictionary().AddKey("OPM", PdfVariant(static_cast<int64_t>(enable ? 1 : 0)));
-}
-
-void PdfExtGState::SetRenderingIntent(const string_view& intent)
-{
-    this->GetObject().GetDictionary().AddKey("RI", PdfName(intent));
-}
-
-void PdfExtGState::SetFrequency(double frequency)
-{
-    PdfDictionary halftoneDict;
-    halftoneDict.AddKey("HalftoneType", PdfVariant(static_cast<int64_t>(1)));
-    halftoneDict.AddKey("Frequency", PdfVariant(frequency));
-    halftoneDict.AddKey("Angle", PdfVariant(45.0));
-    halftoneDict.AddKey("SpotFunction", PdfName("SimpleDot"));
-
-    this->GetObject().GetDictionary().AddKey("HT", halftoneDict);
+    if (definition->NonZeroOverprintMode != nullptr)
+        GetDictionary().AddKey("OPM"_n, PdfVariant(static_cast<int64_t>(*definition->NonZeroOverprintMode ? 1 : 0)));
 }

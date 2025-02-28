@@ -14,7 +14,7 @@
 #include <podofo/main/PdfDeclarations.h>
 
 #define CHECK_FT_RC(rc, func) if (rc != 0)\
-    PODOFO_RAISE_ERROR_INFO(PdfErrorCode::FreeType, "Function " #func " failed")
+    PODOFO_RAISE_ERROR_INFO(PdfErrorCode::FreeTypeError, "Function " #func " failed")
 
 namespace FT
 {
@@ -23,6 +23,8 @@ namespace FT
         PoDoFo::charbuff& buffer);
     FT_Face CreateFaceFromBuffer(const PoDoFo::bufferview& view, unsigned faceIndex,
         PoDoFo::charbuff& buffer);
+    // Extract a CFF table from a OpenType CFF font
+    FT_Face ExtractCFFFont(FT_Face face, PoDoFo::charbuff& buffer);
     // No check for TTC fonts
     FT_Face CreateFaceFromBuffer(const PoDoFo::bufferview& view);
     PoDoFo::charbuff GetDataFromFace(FT_Face face);

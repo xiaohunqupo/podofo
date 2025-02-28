@@ -8,6 +8,7 @@
 #define PDF_ENCODING_MAP_FACTORY_H
 
 #include "PdfEncodingMap.h"
+#include "PdfCMapEncoding.h"
 
 namespace PoDoFo {
 
@@ -21,6 +22,17 @@ class PODOFO_API PdfEncodingMapFactory final
     friend class PdfFontMetricsFreetype;
 
 public:
+    /** Try to parse a CMap encoding from an object
+     * \remarks The results may be a PdfCMapEncoding or PdfIdentityEncoding
+     */
+    static bool TryParseCMapEncoding(const PdfObject& cmapObj, std::unique_ptr<PdfEncodingMap>& encoding);
+
+    /** Parse a CMap encoding from an object
+     * \remarks Throws if parse failed
+     * \returns The results may be a non null PdfCMapEncoding or PdfIdentityEncoding on succces
+     */
+    static std::unique_ptr<PdfEncodingMap> ParseCMapEncoding(const PdfObject& cmapObj);
+
     /** Singleton method which returns a global instance
      *  of WinAnsiEncoding.
      *
@@ -61,6 +73,11 @@ public:
     /** Return the encoding map for the given standard font type or nullptr for unknown
      */
     static PdfEncodingMapConstPtr GetStandard14FontEncodingMap(PdfStandard14FontType stdFont);
+
+    /** Get a predefined CMap
+     * \returns The found map or nullptr if absent 
+     */
+    static PdfCMapEncodingConstPtr GetPredefinedCMap(const std::string_view& cmapName);
 
 private:
     PdfEncodingMapFactory() = delete;

@@ -8,6 +8,7 @@
 #include "PdfFontMetrics.h"
 
 #include <podofo/private/FreetypePrivate.h>
+#include <podofo/private/FontUtils.h>
 
 #include "PdfArray.h"
 #include "PdfDictionary.h"
@@ -15,16 +16,143 @@
 #include "PdfEncodingMapFactory.h"
 #include "PdfFont.h"
 #include "PdfIdentityEncoding.h"
+#include "PdfFontMetricsFreetype.h"
 
 using namespace std;
 using namespace PoDoFo;
 
 // Default matrix: thousands of PDF units
-static Matrix2D s_DefaultMatrix = { 1e-3, 0.0, 0.0, 1e-3, 0, 0 };
+static Matrix s_DefaultMatrix = { 1e-3, 0.0, 0.0, 1e-3, 0, 0 };
 
 PdfFontMetrics::PdfFontMetrics() : m_FaceIndex(0) { }
 
 PdfFontMetrics::~PdfFontMetrics() { }
+
+unique_ptr<const PdfFontMetrics> PdfFontMetrics::Create(const string_view& filepath, unsigned faceIndex)
+{
+    return CreateFromFile(filepath, faceIndex, nullptr, false);
+}
+unique_ptr<const PdfFontMetrics> PdfFontMetrics::CreateFromFile(const string_view& filepath, unsigned faceIndex,
+    const PdfFontMetrics* refMetrics, bool skipNormalization)
+{
+    charbuff buffer;
+    unique_ptr<FT_FaceRec_, decltype(&FT_Done_Face)> face(FT::CreateFaceFromFile(filepath, faceIndex, buffer), FT_Done_Face);
+    if (face == nullptr)
+    {
+        PoDoFo::LogMessage(PdfLogSeverity::Error, "Error when loading the face from buffer");
+        return nullptr;
+    }
+    auto ret = CreateFromFace(face.get(), std::make_unique<charbuff>(std::move(buffer)), refMetrics, skipNormalization);
+    if (ret != nullptr)
+    {
+        ret->m_FilePath = filepath;
+        ret->m_FaceIndex = faceIndex;
+    }
+
+    (void)face.release();
+    return ret;
+}
+
+unique_ptr<const PdfFontMetrics> PdfFontMetrics::CreateFromBuffer(const bufferview& buffer, unsigned faceIndex)
+{
+    return CreateFromBuffer(buffer, faceIndex, nullptr, false);
+}
+
+unique_ptr<const PdfFontMetrics> PdfFontMetrics::CreateFromBuffer(const bufferview& view, unsigned faceIndex,
+    const PdfFontMetrics* refMetrics, bool skipNormalization)
+{
+    charbuff buffer;
+    unique_ptr<FT_FaceRec_, decltype(&FT_Done_Face)> face(FT::CreateFaceFromBuffer(view, faceIndex, buffer), FT_Done_Face);
+    if (face == nullptr)
+    {
+        PoDoFo::LogMessage(PdfLogSeverity::Error, "Error when loading the face from buffer");
+        return nullptr;
+    }
+
+
+    auto ret = CreateFromFace(face.get(), std::make_unique<charbuff>(buffer), refMetrics, skipNormalization);
+    if (ret != nullptr)
+        ret->m_FaceIndex = faceIndex;
+
+    (void)face.release();
+    return ret;
+}
+
+unique_ptr<const PdfFontMetrics> PdfFontMetrics::CreateMergedMetrics(bool skipNormalization) const
+{
+    if (!skipNormalization)
+    {
+        auto fontType = GetFontFileType();
+        if (fontType == PdfFontFileType::Type1)
+        {
+            // Unconditionally convert the Type1 font to CFF: this allow
+            // the font file to be insterted in a CID font
+            charbuff cffDest;
+            PoDoFo::ConvertFontType1ToCFF(GetOrLoadFontFileData(), cffDest);
+            unique_ptr<FT_FaceRec_, decltype(&FT_Done_Face)> face(FT::CreateFaceFromBuffer(cffDest), FT_Done_Face);
+            auto ret = unique_ptr<PdfFontMetricsFreetype>(new PdfFontMetricsFreetype(
+                face.get(), datahandle(std::move(cffDest)), this));
+            (void)face.release();
+            return ret;
+        }
+    }
+
+    auto face = GetFaceHandle();
+    auto ret = unique_ptr<PdfFontMetricsFreetype>(new PdfFontMetricsFreetype(face,
+        GetFontFileDataHandle(), this));
+    // Reference the face after having created a new PdfFontMetricsFreetype instance
+    FT_Reference_Face(face);
+    return ret;
+}
+
+unique_ptr<PdfFontMetrics> PdfFontMetrics::CreateFromFace(FT_Face face, unique_ptr<charbuff>&& buffer,
+    const PdfFontMetrics* refMetrics, bool skipNormalization)
+{
+    PdfFontFileType fontType;
+    if (!FT::TryGetFontFileFormat(face, fontType))
+        return nullptr;
+
+    if (!skipNormalization)
+    {
+        if (fontType == PdfFontFileType::Type1)
+        {
+            // Unconditionally convert the Type1 font to CFF: this allow
+            // the font file to be insterted in a CID font
+            charbuff cffDest;
+            PoDoFo::ConvertFontType1ToCFF(*buffer, cffDest);
+            unique_ptr<FT_FaceRec_, decltype(&FT_Done_Face)> newface(FT::CreateFaceFromBuffer(cffDest), FT_Done_Face);
+            auto ret = unique_ptr<PdfFontMetricsFreetype>(new PdfFontMetricsFreetype(
+                newface.get(), datahandle(std::move(cffDest)), refMetrics));
+            (void)newface.release();
+            return ret;
+        }
+    }
+
+    return unique_ptr<PdfFontMetrics>(new PdfFontMetricsFreetype(face, datahandle(std::move(buffer)), refMetrics));
+}
+
+unsigned PdfFontMetrics::GetGlyphCount() const
+{
+    return GetGlyphCountFontProgram();
+}
+
+unsigned PdfFontMetrics::GetGlyphCount(PdfGlyphAccess access) const
+{
+    switch (access)
+    {
+        case PdfGlyphAccess::ReadMetrics:
+        {
+            if (m_ParsedWidths == nullptr)
+                return 0;
+
+            return (unsigned)m_ParsedWidths->size();
+        }
+        case PdfGlyphAccess::FontProgram:
+            return GetGlyphCountFontProgram();
+        default:
+            PODOFO_RAISE_ERROR(PdfErrorCode::InvalidEnumValue);
+    }
+}
 
 double PdfFontMetrics::GetGlyphWidth(unsigned gid) const
 {
@@ -33,6 +161,54 @@ double PdfFontMetrics::GetGlyphWidth(unsigned gid) const
         return GetDefaultWidth();
 
     return width;
+}
+
+double PdfFontMetrics::GetGlyphWidth(unsigned gid, PdfGlyphAccess access) const
+{
+    double width;
+    if (!TryGetGlyphWidth(gid, access, width))
+        return GetDefaultWidth();
+
+    return width;
+}
+
+bool PdfFontMetrics::TryGetGlyphWidth(unsigned gid, double& width) const
+{
+    if (m_ParsedWidths != nullptr)
+    {
+        if (gid >= m_ParsedWidths->size())
+        {
+            width = -1;
+            return false;
+        }
+
+        width = (*m_ParsedWidths)[gid];
+        return true;
+    }
+
+    return TryGetGlyphWidthFontProgram(gid, width);
+}
+
+bool PdfFontMetrics::TryGetGlyphWidth(unsigned gid, PdfGlyphAccess access, double& width) const
+{
+    switch (access)
+    {
+        case PdfGlyphAccess::ReadMetrics:
+        {
+            if (m_ParsedWidths == nullptr || gid >= m_ParsedWidths->size())
+            {
+                width = -1;
+                return false;
+            }
+
+            width = (*m_ParsedWidths)[gid];
+            return true;
+        }
+        case PdfGlyphAccess::FontProgram:
+            return TryGetGlyphWidthFontProgram(gid, width);
+        default:
+            PODOFO_RAISE_ERROR(PdfErrorCode::InvalidEnumValue);
+    }
 }
 
 void PdfFontMetrics::SubstituteGIDs(vector<unsigned>& gids, vector<unsigned char>& backwardMap) const
@@ -52,61 +228,44 @@ bufferview PdfFontMetrics::GetOrLoadFontFileData() const
     return GetFontFileDataHandle().view();
 }
 
-FT_Face PdfFontMetrics::GetOrLoadFace() const
-{
-    FT_Face face;
-    if (!TryGetOrLoadFace(face))
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::FreeType, "Error loading FreeType face");
-
-    return face;
-}
-
-bool PdfFontMetrics::TryGetOrLoadFace(FT_Face& face) const
-{
-    face = GetFaceHandle().get();
-    return face != nullptr;
-}
-
 const PdfObject* PdfFontMetrics::GetFontFileObject() const
 {
     // Return nullptr by default
     return nullptr;
 }
 
-string_view PdfFontMetrics::GetFontNameSafe(bool familyFirst) const
+string_view PdfFontMetrics::GeFontFamilyNameSafe() const
 {
-    if (familyFirst)
-    {
-        auto baseFontName = GetFontFamilyName();
-        if (!baseFontName.empty())
-            return baseFontName;
-
-        return GetFontName();
-    }
-    else
-    {
-        auto fontName = GetFontName();
-        if (!fontName.empty())
-            return fontName;
-
-        return GetFontFamilyName();
-    }
+    const_cast<PdfFontMetrics&>(*this).initFamilyFontNameSafe();
+    return m_FamilyFontNameSafe;
 }
 
-string_view PdfFontMetrics::GetBaseFontNameSafe() const
+unsigned char PdfFontMetrics::GetSubsetPrefixLength() const
 {
-    const_cast<PdfFontMetrics&>(*this).initBaseFontNameSafe();
-    return *m_BaseFontNameSafe;
+    // By default return no prefix
+    return 0;
 }
 
-void PdfFontMetrics::initBaseFontNameSafe()
+string_view PdfFontMetrics::GetPostScriptNameRough() const
 {
-    if (m_BaseFontNameSafe != nullptr)
+    return GetFontName().substr(GetSubsetPrefixLength());
+}
+
+void PdfFontMetrics::SetParsedWidths(GlyphMetricsListConstPtr&& parsedWidths)
+{
+    m_ParsedWidths = std::move(parsedWidths);
+}
+
+void PdfFontMetrics::initFamilyFontNameSafe()
+{
+    if (m_FamilyFontNameSafe.length() != 0)
         return;
 
-    m_BaseFontNameSafe.reset(new string(GetBaseFontName()));
-    if (m_BaseFontNameSafe->length() == 0)
-        *m_BaseFontNameSafe = PoDoFo::NormalizeFontName(GetFontFamilyName());;
+    m_FamilyFontNameSafe = GetFontFamilyName();
+    if (m_FamilyFontNameSafe.length() == 0)
+        m_FamilyFontNameSafe = GetBaseFontName();
+
+    PODOFO_ASSERT(m_FamilyFontNameSafe.length() != 0);
 }
 
 string_view PdfFontMetrics::GetFontNameRaw() const
@@ -126,6 +285,55 @@ unsigned PdfFontMetrics::GetWeight() const
     }
 
     return (unsigned)weight;
+}
+
+PdfFontDescriptorFlags PdfFontMetrics::GetFlags() const
+{
+    PdfFontDescriptorFlags ret;
+    (void)TryGetFlags(ret);
+    return ret;
+}
+
+array<double, 4> PdfFontMetrics::GetBoundingBox() const
+{
+    array<double, 4> ret;
+    (void)TryGetBoundingBox(ret);
+    return ret;
+}
+
+double PdfFontMetrics::GetItalicAngle() const
+{
+    double ret;
+    (void)TryGetItalicAngle(ret);
+    return ret;
+}
+
+double PdfFontMetrics::GetAscent() const
+{
+    double ret;
+    (void)TryGetAscent(ret);
+    return ret;
+}
+
+double PdfFontMetrics::GetDescent() const
+{
+    double ret;
+    (void)TryGetDescent(ret);
+    return ret;
+}
+
+double PdfFontMetrics::GetCapHeight() const
+{
+    double ret;
+    (void)TryGetCapHeight(ret);
+    return ret;
+}
+
+double PdfFontMetrics::GetStemV() const
+{
+    double ret;
+    (void)TryGetStemV(ret);
+    return ret;
 }
 
 double PdfFontMetrics::GetLeading() const
@@ -206,6 +414,11 @@ PdfFontStyle PdfFontMetrics::GetStyle() const
     return *m_Style;
 }
 
+bool PdfFontMetrics::IsObjectLoaded() const
+{
+    return false;
+}
+
 bool PdfFontMetrics::IsStandard14FontMetrics() const
 {
     PdfStandard14FontType std14Font;
@@ -218,7 +431,7 @@ bool PdfFontMetrics::IsStandard14FontMetrics(PdfStandard14FontType& std14Font) c
     return false;
 }
 
-const Matrix2D& PdfFontMetrics::GetMatrix() const
+const Matrix& PdfFontMetrics::GetMatrix() const
 {
     return s_DefaultMatrix;
 }
@@ -228,8 +441,7 @@ bool PdfFontMetrics::IsType1Kind() const
     switch (GetFontFileType())
     {
         case PdfFontFileType::Type1:
-        case PdfFontFileType::Type1CCF:
-        case PdfFontFileType::CIDType1:
+        case PdfFontFileType::Type1CFF:
             return true;
         default:
             return false;
@@ -238,14 +450,7 @@ bool PdfFontMetrics::IsType1Kind() const
 
 bool PdfFontMetrics::IsTrueTypeKind() const
 {
-    switch (GetFontFileType())
-    {
-        case PdfFontFileType::TrueType:
-        case PdfFontFileType::OpenType:
-            return true;
-        default:
-            return false;
-    }
+    return GetFontFileType() == PdfFontFileType::TrueType;
 }
 
 bool PdfFontMetrics::IsPdfSymbolic() const
@@ -282,10 +487,10 @@ bool PdfFontMetrics::TryGetImplicitEncoding(PdfEncodingMapConstPtr& encoding) co
     {
         // 2.1) An encoding stored in the font program (Type1)
         // ISO 32000-1:2008 9.6.6.2 "Encodings for Type 1 Fonts"
-        FT_Face face;
-        if (TryGetOrLoadFace(face))
+        auto face = GetFaceHandle();
+        if (face != nullptr)
         {
-            encoding = getFontType1Encoding(face);
+            encoding = getFontType1ImplicitEncoding(face);
             return true;
         }
     }
@@ -313,7 +518,7 @@ bool PdfFontMetrics::TryGetImplicitEncoding(PdfEncodingMapConstPtr& encoding) co
     }
 
     // As a last chance, try check if the font name is actually a Standard14
-    if (PdfFont::IsStandard14Font(GetFontNameSafe(), std14Font))
+    if (PdfFont::IsStandard14Font(GetFontName(), std14Font))
     {
         encoding = PdfEncodingMapFactory::GetStandard14FontEncodingMap(std14Font);
         return true;
@@ -334,8 +539,38 @@ const PdfCIDToGIDMapConstPtr& PdfFontMetrics::getCIDToGIDMap() const
     return s_null;
 }
 
+unsigned PdfFontMetrics::GetGlyphCountFontProgram() const
+{
+    auto face = GetFaceHandle();
+    return (unsigned)face->num_glyphs;
+}
+
+bool PdfFontMetrics::TryGetGlyphWidthFontProgram(unsigned gid, double& width) const
+{
+    auto face = GetFaceHandle();
+    if (face == nullptr || FT_Load_Glyph(face, gid, FT_LOAD_NO_SCALE | FT_LOAD_NO_BITMAP) != 0)
+    {
+        width = -1;
+        return false;
+    }
+
+    // zero return code is success!
+    width = face->glyph->metrics.horiAdvance / (double)face->units_per_EM;
+    return true;
+}
+
+bool PdfFontMetrics::HasParsedWidths() const
+{
+    return m_ParsedWidths != nullptr;
+}
+
 PdfFontMetricsBase::PdfFontMetricsBase()
-    : m_dataInit(false), m_faceInit(false) { }
+    : m_dataInit(false), m_faceInit(false), m_Face(nullptr) { }
+
+PdfFontMetricsBase::~PdfFontMetricsBase()
+{
+    FT_Done_Face(m_Face);
+}
 
 const datahandle& PdfFontMetricsBase::GetFontFileDataHandle() const
 {
@@ -349,18 +584,15 @@ const datahandle& PdfFontMetricsBase::GetFontFileDataHandle() const
     return m_Data;
 }
 
-const FreeTypeFacePtr& PdfFontMetricsBase::GetFaceHandle() const
+FT_Face PdfFontMetricsBase::GetFaceHandle() const
 {
     if (!m_faceInit)
     {
         auto& rthis = const_cast<PdfFontMetricsBase&>(*this);
         auto view = GetFontFileDataHandle().view();
-        // NOTE: The data always represent a face, collections are not allowed
-        FT_Face face = nullptr;
-        if (view.size() != 0 && (face = FT::CreateFaceFromBuffer(view)) != nullptr)
-            rthis.m_Face = FreeTypeFacePtr(face);
-        else
-            rthis.m_Face = FreeTypeFacePtr();
+        // NOTE: The data always represents a face, not a collection
+        if (view.size() != 0)
+            rthis.m_Face = FT::CreateFaceFromBuffer(view);
 
         rthis.m_faceInit = true;
     }
@@ -368,18 +600,3 @@ const FreeTypeFacePtr& PdfFontMetricsBase::GetFaceHandle() const
     return m_Face;
 }
 
-FreeTypeFacePtr::FreeTypeFacePtr() { }
-
-FreeTypeFacePtr::FreeTypeFacePtr(FT_Face face)
-    : shared_ptr<FT_FaceRec_>(face, FT_Done_Face) {}
-
-void FreeTypeFacePtr::reset(FT_Face face)
-{
-    shared_ptr<FT_FaceRec_>::reset(face, FT_Done_Face);
-}
-
-void PdfFontMetrics::SetFilePath(std::string&& filepath, unsigned faceIndex)
-{
-    m_FilePath = std::move(filepath);
-    m_FaceIndex = faceIndex;
-}

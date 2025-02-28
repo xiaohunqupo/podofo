@@ -14,30 +14,16 @@
 
 namespace PoDoFo {
 
-class PdfArray;
-class PdfObject;
-class PdfVariant;
-class PdfEncodingMap;
 struct PdfEncodingLimits;
 
 class PODOFO_API PdfFontMetricsFreetype final : public PdfFontMetrics
 {
-    friend class PdfFontManager;
+    friend class PdfFontMetrics;
 
 public:
-    static std::unique_ptr<PdfFontMetricsFreetype> FromMetrics(const PdfFontMetrics& metrics);
-
-    /// <summary>
-    /// Create a metrics from a FT_Face
-    /// </summary>
-    /// <param name="face">The FT_Face. Font data is copied</param>
-    static std::unique_ptr<PdfFontMetricsFreetype> FromFace(FT_Face face);
+    ~PdfFontMetricsFreetype();
 
     std::unique_ptr<PdfCMapEncoding> CreateToUnicodeMap(const PdfEncodingLimits& limitHints) const override;
-
-    unsigned GetGlyphCount() const override;
-
-    bool TryGetGlyphWidth(unsigned gid, double& width) const override;
 
     bool HasUnicodeMapping() const override;
 
@@ -57,31 +43,31 @@ public:
 
     std::string_view GetFontName() const override;
 
-    std::string_view GetBaseFontName() const override;
-
     std::string_view GetFontFamilyName() const override;
+
+    unsigned char GetSubsetPrefixLength() const override;
 
     PdfFontStretch GetFontStretch() const override;
 
-    int GetWeightRaw() const override;
+    bool TryGetFlags(PdfFontDescriptorFlags& value) const override;
 
-    PdfFontDescriptorFlags GetFlags() const override;
+    bool TryGetBoundingBox(std::array<double, 4>& value) const override;
 
-    void GetBoundingBox(std::vector<double>& bbox) const override;
+    bool TryGetItalicAngle(double& value) const override;
 
-    double GetItalicAngle() const override;
+    bool TryGetAscent(double& value) const override;
 
-    double GetAscent() const override;
+    bool TryGetDescent(double& value) const override;
 
-    double GetDescent() const override;
+    bool TryGetCapHeight(double& value) const override;
+
+    bool TryGetStemV(double& value) const override;
 
     double GetLeadingRaw() const override;
 
-    double GetCapHeight() const override;
+    int GetWeightRaw() const override;
 
     double GetXHeightRaw() const override;
-
-    double GetStemV() const override;
 
     double GetStemHRaw() const override;
 
@@ -99,9 +85,15 @@ public:
 
     const datahandle& GetFontFileDataHandle() const override;
 
-    const FreeTypeFacePtr& GetFaceHandle() const override;
+    FT_Face GetFaceHandle() const override;
 
 protected:
+    std::string_view GetBaseFontName() const override;
+
+    unsigned GetGlyphCountFontProgram() const override;
+
+    bool TryGetGlyphWidthFontProgram(unsigned gid, double& width) const override;
+
     bool getIsBoldHint() const override;
 
     bool getIsItalicHint() const override;
@@ -109,47 +101,50 @@ protected:
     const PdfCIDToGIDMapConstPtr& getCIDToGIDMap() const override;
 
 private:
-    PdfFontMetricsFreetype(const FreeTypeFacePtr& face, const datahandle& data, const PdfFontMetrics* refMetrics);
+    PdfFontMetricsFreetype(FT_Face face, const datahandle& data, const PdfFontMetrics* refMetrics = nullptr);
 
-    PdfFontMetricsFreetype(const FreeTypeFacePtr& face, const datahandle& data);
-
-    /** Load the metric data from the FTFace data
-     * Called internally by the constructors
-     */
-    void initFromFace(const PdfFontMetrics* refMetrics);
+    void init(const PdfFontMetrics* refMetrics);
 
     void ensureLengthsReady();
 
     void initType1Lengths(const bufferview& view);
 
-    void tryBuildLegacyCharMap();
+    bool tryBuildFallbackUnicodeMap();
 
 private:
-    FreeTypeFacePtr m_Face;
+    FT_Face m_Face;
     datahandle m_Data;
     PdfCIDToGIDMapConstPtr m_CIDToGIDMap;
     PdfFontFileType m_FontFileType;
 
-    std::unique_ptr<std::unordered_map<uint32_t, unsigned>> m_legacyUnicodeMap;
+    unsigned char m_SubsetPrefixLength;
+    bool m_HasUnicodeMapping;
+    std::unique_ptr<std::unordered_map<uint32_t, unsigned>> m_fallbackUnicodeMap;
 
     std::string m_FontBaseName;
     std::string m_FontName;
     std::string m_FontFamilyName;
-    PdfFontStretch m_FontStretch;
-    int m_Weight;
+
+    // Conditionally required metrics
     PdfFontDescriptorFlags m_Flags;
+    std::array<double, 4> m_BBox;
     double m_ItalicAngle;
     double m_Ascent;
     double m_Descent;
-    double m_Leading;
     double m_CapHeight;
-    double m_XHeight;
     double m_StemV;
+
+    // Optional metrics
+    PdfFontStretch m_FontStretch;
+    int m_Weight;
+    double m_Leading;
+    double m_XHeight;
     double m_StemH;
     double m_AvgWidth;
     double m_MaxWidth;
     double m_DefaultWidth;
 
+    // Computed metrics
     double m_LineSpacing;
     double m_UnderlineThickness;
     double m_UnderlinePosition;
