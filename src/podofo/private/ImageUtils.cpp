@@ -37,7 +37,7 @@ static charbuff initScanLine(PdfPixelFormat format, unsigned width, int scanLine
 
 void utls::FetchImage(OutputStream& stream, PdfPixelFormat format, int scanLineSize,
     const unsigned char* imageData, unsigned width, unsigned heigth, unsigned bitsPerComponent,
-    const PdfColorSpace& map, const charbuff& smaskData)
+    const PdfColorSpaceFilter& map, const charbuff& smaskData)
 {
     // TODO: Add support for non-trivial /BitsPerComponent. This could be done
     // by keeping existing optimized fecthScanLine* methods and add other overloads
@@ -366,7 +366,7 @@ void fetchScanLineRGB(unsigned char* dstScanLine, PdfPixelFormat format,
             break;
         }
         default:
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedImageFormat, "Unsupported pixel format");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedPixelFormat, "Unsupported pixel format");
     }
 }
 
@@ -443,7 +443,7 @@ void fetchScanLineRGB(unsigned char* dstScanLine, PdfPixelFormat format,
             break;
         }
         default:
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedImageFormat, "Unsupported pixel format");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedPixelFormat, "Unsupported pixel format");
     }
 }
 
@@ -497,7 +497,7 @@ void fetchScanLineGrayScale(unsigned char* dstScanLine, PdfPixelFormat format,
             break;
         }
         default:
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedImageFormat, "Unsupported pixel format");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedPixelFormat, "Unsupported pixel format");
     }
 }
 
@@ -553,7 +553,7 @@ void fetchScanLineGrayScale(unsigned char* dstScanLine, PdfPixelFormat format,
             break;
         }
         default:
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedImageFormat, "Unsupported pixel format");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedPixelFormat, "Unsupported pixel format");
     }
 }
 
@@ -607,7 +607,7 @@ void fetchScanLineBW(unsigned char* dstScanLine, PdfPixelFormat format,
             break;
         }
         default:
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedImageFormat, "Unsupported pixel format");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedPixelFormat, "Unsupported pixel format");
     }
 }
 
@@ -664,7 +664,7 @@ void fetchScanLineBW(unsigned char* dstScanLine, PdfPixelFormat format,
             break;
         }
         default:
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedImageFormat, "Unsupported pixel format");
+            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::UnsupportedPixelFormat, "Unsupported pixel format");
     }
 }
 

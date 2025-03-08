@@ -23,9 +23,11 @@ void PdfSigner::FetchIntermediateResult(charbuff& result)
     PODOFO_RAISE_ERROR(PdfErrorCode::NotImplemented);
 }
 
-void PdfSigner::ComputeSignatureSequential(const bufferview& processedResult, charbuff& buffer, bool dryrun)
+void PdfSigner::ComputeSignatureDeferred(const bufferview& processedResult, charbuff& buffer, bool dryrun)
 {
-    (void)(processedResult, buffer, dryrun);
+    (void)processedResult;
+    (void)buffer;
+    (void)dryrun;
     PODOFO_RAISE_ERROR(PdfErrorCode::NotImplemented);
 }
 
@@ -41,10 +43,9 @@ string PdfSigner::GetSignatureFilter() const
 }
 
 void PoDoFo::SignDocument(PdfMemDocument& doc, StreamDevice& device, PdfSigner& signer,
-    PdfSignature& signature, PdfSaveOptions opts)
+    PdfSignature& signature, PdfSaveOptions saveOptions)
 {
     PdfSigningContext ctx;
-    ctx.SetSaveOptions(opts);
     ctx.AddSignerUnsafe(signature, signer);
-    ctx.Sign(doc, device);
+    ctx.Sign(doc, device, saveOptions);
 }

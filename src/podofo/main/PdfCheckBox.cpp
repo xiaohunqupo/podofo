@@ -28,47 +28,24 @@ PdfCheckBox::PdfCheckBox(PdfObject& obj, PdfAcroForm* acroform)
 
 void PdfCheckBox::AddAppearanceStream(const PdfName& name, const PdfReference& reference)
 {
-    if (!GetObject().GetDictionary().HasKey("AP"))
-        GetObject().GetDictionary().AddKey("AP", PdfDictionary());
+    if (!GetDictionary().HasKey("AP"))
+        GetDictionary().AddKey("AP"_n, PdfDictionary());
 
-    if (!GetObject().GetDictionary().MustFindKey("AP").GetDictionary().HasKey("N"))
-        GetObject().GetDictionary().MustFindKey("AP").GetDictionary().AddKey("N", PdfDictionary());
+    if (!GetDictionary().MustFindKey("AP").GetDictionary().HasKey("N"))
+        GetDictionary().MustFindKey("AP").GetDictionary().AddKey("N"_n, PdfDictionary());
 
-    GetObject().GetDictionary().MustFindKey("AP").
+    GetDictionary().MustFindKey("AP").
         GetDictionary().MustFindKey("N").GetDictionary().AddKey(name, reference);
 }
 
 void PdfCheckBox::SetAppearanceChecked(const PdfXObject& xobj)
 {
-    this->AddAppearanceStream("Yes", xobj.GetObject().GetIndirectReference());
+    this->AddAppearanceStream("Yes"_n, xobj.GetObject().GetIndirectReference());
 }
 
 void PdfCheckBox::SetAppearanceUnchecked(const PdfXObject& xobj)
 {
-    this->AddAppearanceStream("Off", xobj.GetObject().GetIndirectReference());
-}
-
-void PdfCheckBox::SetChecked(bool isChecked)
-{
-    GetObject().GetDictionary().AddKey("V", (isChecked ? PdfName("Yes") : PdfName("Off")));
-    GetObject().GetDictionary().AddKey("AS", (isChecked ? PdfName("Yes") : PdfName("Off")));
-}
-
-bool PdfCheckBox::IsChecked() const
-{
-    auto& dict = GetObject().GetDictionary();
-    if (dict.HasKey("V"))
-    {
-        auto& name = dict.MustFindKey("V").GetName();
-        return (name == "Yes" || name == "On");
-    }
-    else if (dict.HasKey("AS"))
-    {
-        auto& name = dict.MustFindKey("AS").GetName();
-        return (name == "Yes" || name == "On");
-    }
-
-    return false;
+    this->AddAppearanceStream("Off"_n, xobj.GetObject().GetIndirectReference());
 }
 
 PdfCheckBox* PdfCheckBox::GetParent()

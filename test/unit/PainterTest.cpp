@@ -16,42 +16,47 @@ namespace
     class FakeCanvas : public PdfCanvas
     {
     public:
-        FakeCanvas() { }
+        FakeCanvas()
+            : m_Resources(m_doc.GetPages().CreatePage().GetResources())
+        {
+        }
 
     public:
-        PdfObjectStream& GetStreamForAppending(PdfStreamAppendFlags flags) override
+        PdfObjectStream& GetOrCreateContentsStream(PdfStreamAppendFlags flags) override
         {
             (void)flags;
             return m_resourceObj.GetOrCreateStream();
         }
 
-        PdfResources& GetOrCreateResources() override
+        PdfObjectStream& ResetContentsStream() override
         {
             PODOFO_RAISE_ERROR(PdfErrorCode::InternalLogic);
         }
 
-        /** Get the current canvas size in PDF Units
-         *  \returns a Rect containing the page size available for drawing
-         */
-        Rect GetRectRaw() const override
+        PdfResources& GetOrCreateResources() override
+        {
+            // NOTE: Return a dummy resource
+            return m_Resources;
+        }
+
+        Corners GetRectRaw() const override
         {
             PODOFO_RAISE_ERROR(PdfErrorCode::InternalLogic);
+        }
+
+        void CopyContentsTo(OutputStream& stream) const override
+        {
+            auto objStream = m_resourceObj.GetStream();
+            if (objStream == nullptr)
+                return;
+
+            objStream->CopyTo(stream);
         }
 
         bool HasRotation(double& teta) const override
         {
             teta = 0;
             return false;
-        }
-
-        charbuff GetCopy() const
-        {
-            return m_resourceObj.MustGetStream().GetCopy();
-        }
-
-        void EnsureResourcesCreated() override
-        {
-            // Do nothing
         }
 
     protected:
@@ -63,13 +68,15 @@ namespace
         {
             PODOFO_RAISE_ERROR(PdfErrorCode::InternalLogic);
         }
-        PdfElement& getElement() override
+        PdfDictionaryElement& getElement() override
         {
             PODOFO_RAISE_ERROR(PdfErrorCode::InternalLogic);
         }
 
     private:
         PdfObject m_resourceObj;
+        PdfMemDocument m_doc;
+        PdfResources& m_Resources;
     };
 }
 
@@ -96,14 +103,14 @@ TEST_CASE("TestPainter1")
     painter.SetCanvas(canvas);
     drawSample(painter);
     painter.FinishDrawing();
-    auto copy = canvas.GetCopy();
+    auto copy = canvas.GetContentsCopy();
     REQUIRE(copy == s_expected);
 }
 
 TEST_CASE("TestPainter2")
 {
     PdfMemDocument doc;
-    auto& page = doc.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
     PdfPainter painter;
     painter.SetCanvas(page);
     drawSample(painter);
@@ -117,7 +124,7 @@ TEST_CASE("TestPainter2")
 TEST_CASE("TestPainter3")
 {
     PdfMemDocument doc;
-    auto& page = doc.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
     PdfPainter painter;
     painter.SetCanvas(page);
     painter.TextState.SetFont(doc.GetFonts().GetStandard14Font(PdfStandard14FontType::TimesRoman), 15);
@@ -126,21 +133,20 @@ TEST_CASE("TestPainter3")
     doc.Save(TestUtils::GetTestOutputFilePath("TestPainter3.pdf"));
 
     auto expected = R"(q
-BT
-/Ft5 15 Tf
-100 500 Td
 q
+BT
+/Ft0 15 Tf
 0.75 w
+100 500 Td
+<0203040405010605070408> Tj
+ET
 100 498.5 m
 172.075 498.5 l
 S
-0.75 w
 100 503.93 m
 172.075 503.93 l
 S
 Q
-<0001020203040503060207> Tj
-ET
 Q
 )"sv;
 
@@ -151,7 +157,7 @@ Q
 TEST_CASE("TestPainter4")
 {
     PdfMemDocument doc;
-    auto& page = doc.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
 
     PdfFontCreateParams params;
     params.Encoding = PdfEncoding(PdfEncodingMapFactory::WinAnsiEncodingInstance());
@@ -207,23 +213,22 @@ TEST_CASE("TestPainter4")
 
     auto expected = R"(q
 BT
-/Ft5 15 Tf
+/Ft0 15 Tf
 100 500 Td
 (Test1) Tj
 [ (_W) -500 (orld) ] TJ
 
 ET
-BT
-100 600 Td
 q
+BT
 0.75 w
-0.75 w
+100 600 Td
+(Test2) Tj
+ET
 100 604.35 m
 137.515 604.35 l
 S
 Q
-(Test2) Tj
-ET
 20 20 m
 100 20 l
 127.614237 20 150 42.385763 150 70 c
@@ -315,7 +320,7 @@ Q
 TEST_CASE("TestPainter5")
 {
     PdfMemDocument doc;
-    auto& page = doc.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
 
     PdfFontCreateParams params;
     params.Encoding = PdfEncoding(PdfEncodingMapFactory::WinAnsiEncodingInstance());
@@ -335,7 +340,7 @@ q
 W
 n
 BT
-/Ft5 15 Tf
+/Ft0 15 Tf
 100 628.75 Td
 (Hello) Tj
 0 -15 Td
@@ -352,7 +357,7 @@ Q
 TEST_CASE("TestPainter6")
 {
     PdfMemDocument doc;
-    auto& page = doc.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
 
     PdfFontCreateParams params;
     params.Encoding = PdfEncoding(PdfEncodingMapFactory::WinAnsiEncodingInstance());
@@ -391,17 +396,17 @@ TEST_CASE("TestAppend")
     string_view example = "BT (Hello) Tj ET";
 
     PdfMemDocument doc;
-    auto& page = doc.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
 
     auto& contents = page.GetOrCreateContents();
-    auto& stream = contents.GetStreamForAppending();
+    auto& stream = contents.CreateStreamForAppending();
     stream.SetData(example);
 
     compareStreamContent(stream, example);
 
     PdfPainter painter;
     painter.SetCanvas(page);
-    painter.GraphicsState.SetFillColor(PdfColor(1.0, 1.0, 1.0));
+    painter.GraphicsState.SetNonStrokingColor(PdfColor(1.0, 1.0, 1.0));
     painter.FinishDrawing();
 
     auto out = getContents(page);
@@ -411,8 +416,8 @@ TEST_CASE("TestAppend")
 TEST_CASE("TestRotate")
 {
     unordered_map<int, Matrix> matrices = {
-        { 90, Matrix::FromCoefficients(6.1232339957367660e-17, 1, -1, 6.1232339957367660e-17, 9.9999999999999982, 0) },
-        { 270, Matrix::FromCoefficients(-1.8369701987210297e-16, -1, 1,-1.8369701987210297e-16, 0, 20.000000000000004) },
+        { 90, Matrix(6.1232339957367660e-17, 1, -1, 6.1232339957367660e-17, 9.9999999999999982, 0) },
+        { 270, Matrix(-1.8369701987210297e-16, -1, 1, -1.8369701987210297e-16, 0, 20.000000000000004) },
     };
 
     auto test = [&](int angle)
@@ -443,6 +448,67 @@ TEST_CASE("TestRotate")
 
     test(90);
     test(270);
+}
+
+// Test coming from https://github.com/podofo/podofo/issues/137
+TEST_CASE("BigDynamicCMAPTest")
+{
+    string_view textOver255 = "12345糟姨集鞋南槍痕痰林托入笑為潮立碰慘紡命窯舒喬檔脊吸渣誘餓躁強瓣倚扣拼襯裙凈錄釀薯憂擇十肅亭宰都愉冬乃考摟償老居題釣盯侵臣騾購標搬輛映納銷蜂宋頭號鄭藝駛斥鏟遵饑絨挨草保示她房礙宜扶涼困供探濫裁鴨膏橫坦傍愧蜓山儀辜略機評疑寸浩韻挪墻含帆由化里肌目淹誤匹枕浸有協斯名哥其香響逼裂油館慰七狹置露河樓弊增熱懂劇難盞拘罵撇芽胡慧關準補必舌遼晴奏愛江掏疲番走芬秩撤搭饅槐伸填灣蝦載簾哄寫急病攤田惕次泡捏糧附刷李鉆解阿違嫁天塌句善訊夠衰唇險學欠堆弟貪爆徐太孤鎮膛婆褲傷謹憶鵝踢贈擔仗膀挽兄扔基窩幕裹血暴米政覆柴力豎悼劫肥書翁屑";
+
+    auto outputFile = TestUtils::GetTestOutputFilePath("BigDynamicCMAPTest.pdf");
+    {
+        PdfMemDocument document;
+
+        auto& fontManager = document.GetFonts();
+        auto metrics = PdfFontMetrics::Create(TestUtils::GetTestInputFilePath("Fonts", "NotoSansTC-Regular.ttf"));
+        auto& font = fontManager.GetOrCreateFont(std::move(metrics));
+
+        // Draw a XObjectForm
+        unique_ptr<PdfXObjectForm> xObjectPtr = document.CreateXObjectForm(Rect(0, 0, 720, 1280));
+        PdfXObjectForm* xObject = xObjectPtr.get();
+
+        {
+            PdfPainter painter;
+            painter.SetCanvas(*xObject);
+
+            painter.GraphicsState.SetNonStrokingColor(PdfColor(0, 0, 0));
+            painter.GraphicsState.SetStrokingColor(PdfColor(0, 0, 0));
+
+            painter.TextState.SetFont(font, 12);
+
+            painter.DrawTextMultiLine(textOver255, 0, 0, 720, 1280);
+
+            painter.FinishDrawing();
+        }
+
+        // Draw XObjectForm to Page
+        auto& pages = document.GetPages();
+        auto& page = pages.CreatePage(Rect(0, 0, 720, 1280));
+
+        {
+            PdfPainter painter;
+            painter.SetCanvas(page);
+            painter.DrawXObject(*xObject, 0, 0, 1.0, 1.0);
+
+            painter.FinishDrawing();
+        }
+
+        document.Save(outputFile);
+    }
+
+    {
+        PdfMemDocument document;
+        document.Load(outputFile);
+        auto& page = document.GetPages().GetPageAt(0);
+        vector<PdfTextEntry> entries;
+        page.ExtractTextTo(entries);
+        REQUIRE(entries.size() == 5);
+        REQUIRE(entries[0].Text == "12345糟姨集鞋南槍痕痰林托入笑為潮立碰慘紡命窯舒喬檔脊吸渣誘餓躁強瓣倚扣拼襯裙凈錄釀薯憂擇十肅亭宰都愉冬乃考摟償老居題釣");
+        REQUIRE(entries[1].Text == "盯侵臣騾購標搬輛映納銷蜂宋頭號鄭藝駛斥鏟遵饑絨挨草保示她房礙宜扶涼困供探濫裁鴨膏橫坦傍愧蜓山儀辜略機評疑寸浩韻挪墻含帆由");
+        REQUIRE(entries[2].Text == "化里肌目淹誤匹枕浸有協斯名哥其香響逼裂油館慰七狹置露河樓弊增熱懂劇難盞拘罵撇芽胡慧關準補必舌遼晴奏愛江掏疲番走芬秩撤搭饅");
+        REQUIRE(entries[3].Text == "槐伸填灣蝦載簾哄寫急病攤田惕次泡捏糧附刷李鉆解阿違嫁天塌句善訊夠衰唇險學欠堆弟貪爆徐太孤鎮膛婆褲傷謹憶鵝踢贈擔仗膀挽兄扔");
+        REQUIRE(entries[4].Text == "基窩幕裹血暴米政覆柴力豎悼劫肥書翁屑");
+    }
 }
 
 static void drawSample(PdfPainter& painter)

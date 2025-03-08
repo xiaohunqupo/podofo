@@ -20,6 +20,11 @@ PdfPredefinedEncoding::PdfPredefinedEncoding(const PdfName& name)
 {
 }
 
+PdfPredefinedEncodingType PdfPredefinedEncoding::GetPredefinedEncodingType() const
+{
+    return PdfPredefinedEncodingType::LegacyPredefined;
+}
+
 void PdfPredefinedEncoding::getExportObject(PdfIndirectObjectList& objects, PdfName& name, PdfObject*& obj) const
 {
     (void)objects;
@@ -33,7 +38,7 @@ void PdfPredefinedEncoding::getExportObject(PdfIndirectObjectList& objects, PdfN
 // -----------------------------------------------------
 
 PdfWinAnsiEncoding::PdfWinAnsiEncoding()
-    : PdfPredefinedEncoding("WinAnsiEncoding")
+    : PdfPredefinedEncoding("WinAnsiEncoding"_n)
 {
 }
 
@@ -302,7 +307,7 @@ const char32_t PdfWinAnsiEncoding::s_cEncoding[256] = {
 };
 
 PdfMacRomanEncoding::PdfMacRomanEncoding()
-    : PdfPredefinedEncoding("MacRomanEncoding")
+    : PdfPredefinedEncoding("MacRomanEncoding"_n)
 {
 }
 
@@ -580,7 +585,7 @@ const char32_t PdfMacRomanEncoding::s_cEncoding[256] = {
 // -----------------------------------------------------
 
 PdfMacExpertEncoding::PdfMacExpertEncoding()
-    : PdfPredefinedEncoding("MacExpertEncoding")
+    : PdfPredefinedEncoding("MacExpertEncoding"_n)
 {
 }
 

@@ -37,10 +37,10 @@ namespace PoDoFo
         ServiceDoDryRun = 2,
     };
 
-    struct PdfSignerCmsParams
+    struct PODOFO_API PdfSignerCmsParams final
     {
         PdfSignatureType SignatureType = PdfSignatureType::PAdES_B;
-        PdfEncryptionAlgorithm Encryption = PdfEncryptionAlgorithm::RSA;
+        PdfSignatureEncryption Encryption = PdfSignatureEncryption::RSA;
         PdfHashingAlgorithm Hashing = PdfHashingAlgorithm::SHA256;
         PdfSigningService SigningService;
         nullable<std::chrono::seconds> SigningTimeUTC;
@@ -62,17 +62,18 @@ namespace PoDoFo
     class PODOFO_API PdfSignerCms : public PdfSigner
     {
     public:
-        /** Load X509 certificate and supply a ASN.1 encoded private key
-         * \param cert x509 certificate
-         * \param pkey asn.1 encoded private key. Can be empty. In that case
-         * signing can be supplied by a signing service, or performing a sequential signing
+        /** Load X.509 certificate and supply a ASN.1 DER encoded private key
+         * \param cert ASN.1 DER encoded X.509 certificate
+         * \param pkey ASN.1 DER encoded private key (PKCS#1 or PKCS#8) formats. It can be empty.
+         * In that case signing can be supplied by a signing service, or
+         * performing a deferred signing
          */
         PdfSignerCms(const bufferview& cert, const bufferview& pkey,
             const PdfSignerCmsParams& parameters = { });
 
-        /** Load X509 certificate without supplying a private key
-         * \param cert x509 certificate
-         * \remarks signing can be supplied by a signing service, or performing a sequential signing
+        /** Load a X.509 certificate without supplying a private key
+         * \param cert ASN.1 DER encoded X.509 certificate
+         * \remarks signing can be supplied by a signing service, or performing a deferred signing
          */
         PdfSignerCms(const bufferview& cert, const PdfSignerCmsParams& parameters = { });
 
@@ -82,7 +83,7 @@ namespace PoDoFo
         void AppendData(const bufferview& data) override;
         void ComputeSignature(charbuff& buffer, bool dryrun) override;
         void FetchIntermediateResult(charbuff& result) override;
-        void ComputeSignatureSequential(const bufferview& processedResult, charbuff& contents, bool dryrun) override;
+        void ComputeSignatureDeferred(const bufferview& processedResult, charbuff& contents, bool dryrun) override;
         void Reset() override;
         std::string GetSignatureFilter() const override;
         std::string GetSignatureSubFilter() const override;
@@ -106,13 +107,13 @@ namespace PoDoFo
 
     private:
         void ensureEventBasedSigning();
-        void ensureSequentialSigning();
+        void ensureDeferredSigning();
         void checkContextInitialized();
         void ensureContextInitialized();
         void resetContext();
         void doSign(const bufferview& input, charbuff& output);
     private:
-        nullable<bool> m_sequentialSigning;
+        nullable<bool> m_deferredSigning;
         charbuff m_certificate;
         std::unique_ptr<CmsContext> m_cmsContext;
         struct evp_pkey_st* m_privKey;

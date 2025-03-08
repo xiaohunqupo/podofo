@@ -66,6 +66,19 @@ namespace PoDoFo
             const std::shared_ptr<PdfField>& parent);
 
         PdfToggleButton(PdfObject& obj, PdfAcroForm* acroform, PdfFieldType fieldType);
+
+    public:
+
+        /** Sets the state of this toggle button
+         *
+         *  \param isChecked if true the toggle button will be checked
+         */
+        void SetChecked(bool isChecked);
+
+        /**
+         * \returns true if the toggle button is checked
+         */
+        bool IsChecked() const;
     };
 }
 

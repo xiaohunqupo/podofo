@@ -25,7 +25,7 @@ static void setSignature(StreamDevice& device, const string_view& sigData,
 static void prepareBeaconsData(size_t signatureSize, string& contentsBeacon, string& byteRangeBeacon);
 
 PdfSigningContext::PdfSigningContext()
-    : m_SaveOptions(PdfSaveOptions::None), m_doc(nullptr)
+    : m_doc(nullptr)
 {
 }
 
@@ -46,7 +46,8 @@ void PdfSigningContext::AddSignerUnsafe(const PdfSignature& signature, PdfSigner
     (void)addSigner(signature, &signer, nullptr);
 }
 
-void PdfSigningContext::StartSigning(PdfMemDocument& doc, const shared_ptr<StreamDevice>& device, PdfSigningResults& results)
+void PdfSigningContext::StartSigning(PdfMemDocument& doc, const shared_ptr<StreamDevice>& device,
+    PdfSigningResults& results, PdfSaveOptions saveOptions)
 {
     ensureNotStarted();
     if (m_signers.size() == 0)
@@ -57,14 +58,14 @@ void PdfSigningContext::StartSigning(PdfMemDocument& doc, const shared_ptr<Strea
 
     charbuff tmpbuff;
     m_contexts = prepareSignatureContexts(doc, true);
-    saveDocForSigning(doc, *device);
+    saveDocForSigning(doc, *device, saveOptions);
     appendDataForSigning(m_contexts, *device, &results.Intermediate, tmpbuff);
 }
 
 void PdfSigningContext::FinishSigning(const PdfSigningResults& processedResults)
 {
     if (m_doc == nullptr)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InternalLogic, "A sequential signing has not been started");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InternalLogic, "A deferred signing has not been started");
 
     charbuff tmpbuff;
     computeSignatures(m_contexts, *m_doc, *m_device, &processedResults, tmpbuff);
@@ -74,7 +75,7 @@ void PdfSigningContext::FinishSigning(const PdfSigningResults& processedResults)
     m_contexts.clear();
 }
 
-void PdfSigningContext::Sign(PdfMemDocument& doc, StreamDevice& device)
+void PdfSigningContext::Sign(PdfMemDocument& doc, StreamDevice& device, PdfSaveOptions saveOptions)
 {
     ensureNotStarted();
     if (m_signers.size() == 0)
@@ -83,7 +84,7 @@ void PdfSigningContext::Sign(PdfMemDocument& doc, StreamDevice& device)
     charbuff tmpbuff;
 
     auto contexts = prepareSignatureContexts(doc, false);
-    saveDocForSigning(doc, device);
+    saveDocForSigning(doc, device, saveOptions);
     appendDataForSigning(contexts, device, nullptr, tmpbuff);
     computeSignatures(contexts, doc, device, nullptr, tmpbuff);
 }
@@ -119,12 +120,12 @@ PdfSignerId PdfSigningContext::addSigner(const PdfSignature& signature, PdfSigne
 void PdfSigningContext::ensureNotStarted() const
 {
     if (m_doc != nullptr)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InternalLogic, "A sequential signing has already been started");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InternalLogic, "A deferred signing has already been started");
 }
 
 // Prepare signature contexts, running dry-run signature computation
 unordered_map<PdfSignerId, PdfSigningContext::SignatureCtx> PdfSigningContext::prepareSignatureContexts(
-    PdfDocument& doc, bool sequentialSigning)
+    PdfDocument& doc, bool deferredSigning)
 {
     unordered_map<PdfSignerId, SignatureCtx> ret;
     for (auto& pair : m_signers)
@@ -135,8 +136,8 @@ unordered_map<PdfSignerId, PdfSigningContext::SignatureCtx> PdfSigningContext::p
         {
             auto& ctx = ret[PdfSignerId(pair.first, i)];
             auto& signer = attrs.Signers[i];
-            if (sequentialSigning)
-                signer->ComputeSignatureSequential({ }, ctx.Contents, true);
+            if (deferredSigning)
+                signer->ComputeSignatureDeferred({ }, ctx.Contents, true);
             else
                 signer->ComputeSignature(ctx.Contents, true);
             ctx.BeaconSize = ctx.Contents.size();
@@ -148,13 +149,13 @@ unordered_map<PdfSignerId, PdfSigningContext::SignatureCtx> PdfSigningContext::p
     return ret;
 }
 
-void PdfSigningContext::saveDocForSigning(PdfMemDocument& doc, StreamDevice& device)
+void PdfSigningContext::saveDocForSigning(PdfMemDocument& doc, StreamDevice& device, PdfSaveOptions saveOptions)
 {
     auto& form = doc.GetOrCreateAcroForm();
 
     // TABLE 8.68 Signature flags: SignaturesExist (1) | AppendOnly (2)
     // NOTE: This enables the signature panel visualization
-    form.GetObject().GetDictionary().AddKey("SigFlags", (int64_t)3);
+    form.GetDictionary().AddKey("SigFlags"_n, (int64_t)3);
 
     auto acroForm = doc.GetAcroForm();
     if (acroForm != nullptr)
@@ -165,7 +166,11 @@ void PdfSigningContext::saveDocForSigning(PdfMemDocument& doc, StreamDevice& dev
         acroForm->GetDictionary().RemoveKey("NeedAppearances");
     }
 
-    doc.SaveUpdate(device, m_SaveOptions);
+    if ((saveOptions & PdfSaveOptions::SaveOnSigning) != PdfSaveOptions::None)
+        doc.Save(device, saveOptions);
+    else
+        doc.SaveUpdate(device, saveOptions);
+
     device.Flush();
 }
 
@@ -222,7 +227,7 @@ void PdfSigningContext::computeSignatures(unordered_map<PdfSignerId, SignatureCt
             if (processedResults == nullptr)
                 signer->ComputeSignature(ctx.Contents, false);
             else
-                signer->ComputeSignatureSequential(processedResults->Intermediate.at(signerId), ctx.Contents, false);
+                signer->ComputeSignatureDeferred(processedResults->Intermediate.at(signerId), ctx.Contents, false);
 
             if (ctx.Contents.size() > ctx.BeaconSize)
                 PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InternalLogic, "Actual signature size bigger than beacon size");

@@ -14,7 +14,7 @@ namespace PoDoFo
 {
     /** A checkbox can be checked or unchecked by the user
      */
-    class PODOFO_API PdfCheckBox : public PdfToggleButton
+    class PODOFO_API PdfCheckBox final : public PdfToggleButton
     {
         friend class PdfField;
 
@@ -39,17 +39,6 @@ namespace PoDoFo
          *  \param rXObject an xobject which contains the drawing commands for an unchecked checkbox
          */
         void SetAppearanceUnchecked(const PdfXObject& xobj);
-
-        /** Sets the state of this checkbox
-         *
-         *  \param isChecked if true the checkbox will be checked
-         */
-        void SetChecked(bool isChecked);
-
-        /**
-         * \returns true if the checkbox is checked
-         */
-        bool IsChecked() const;
 
         PdfCheckBox* GetParent();
         const PdfCheckBox* GetParent() const;

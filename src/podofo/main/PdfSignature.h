@@ -14,22 +14,21 @@
 #include "PdfField.h"
 #include "PdfDate.h"
 #include "PdfData.h"
+#include <podofo/auxiliary/InputDevice.h>
+#include <podofo/auxiliary/OutputDevice.h>
 
 namespace PoDoFo {
 
 class PdfAcroForm;
-class PdfMemDocument;
-class StreamDevice;
-class PdfSigner;
 
-enum class PdfCertPermission
+enum class PdfCertPermission : uint8_t
 {
     NoPerms = 1,
     FormFill = 2,
     Annotations = 3,
 };
 
-struct PdfSignatureBeacons
+struct PdfSignatureBeacons final
 {
     PdfSignatureBeacons();
     charbuff ContentsBeacon;
@@ -38,7 +37,7 @@ struct PdfSignatureBeacons
     std::shared_ptr<size_t> ByteRangeOffset;
 };
 
-class PODOFO_API PdfSignature : public PdfField
+class PODOFO_API PdfSignature final : public PdfField
 {
     friend class PdfField;
     friend class PdfSigningContext;
@@ -58,24 +57,6 @@ public:
      *  \param state the state for which set it the obj; states depend on the annotation type
      */
     void SetAppearanceStream(PdfXObjectForm& obj, PdfAppearanceType appearance = PdfAppearanceType::Normal, const PdfName& state = "");
-
-    /** Create space for signature
-     *
-     * Structure of the PDF file - before signing:
-     * <</ByteRange[ 0 1234567890 1234567890 1234567890]/Contents<signatureData>
-     * Have to be replaiced with the following structure:
-     * <</ByteRange[ 0 count pos count]/Contents<real signature ...0-padding>
-     *
-     * \param filter /Filter for this signature
-     * \param subFilter /SubFilter for this signature
-     * \param subFilter /Type for this signature
-     * \param beacons Shared sentinels that will updated
-     *                during writing of the document
-     */
-    void PrepareForSigning(const std::string_view& filter,
-        const std::string_view& subFilter,
-        const std::string_view& type,
-        const PdfSignatureBeacons& beacons);
 
     /** Set the signer name
     *
@@ -145,10 +126,35 @@ public:
     PdfSignature* GetParent();
     const PdfSignature* GetParent() const;
 
+    /**
+     * Try retrieve the previous revision of the document before signing (if it occurred)
+     * \param input the input device for the document where to search
+     * \param output the output device that will hold the previous revision
+     */
+    bool TryGetPreviousRevision(InputStreamDevice& input, OutputStreamDevice& output) const;
+
 protected:
-    PdfObject* getValueObject() const;
+    PdfObject* getValueObject() const override;
 
 private:
+    /** Create space for signature
+     *
+     * Structure of the PDF file - before signing:
+     * <</ByteRange[ 0 1234567890 1234567890 1234567890]/Contents<signatureData>
+     * Have to be replaiced with the following structure:
+     * <</ByteRange[ 0 count pos count]/Contents<real signature ...0-padding>
+     *
+     * \param filter /Filter for this signature
+     * \param subFilter /SubFilter for this signature
+     * \param subFilter /Type for this signature
+     * \param beacons Shared sentinels that will updated
+     *                during writing of the document
+     */
+    void PrepareForSigning(const std::string_view& filter,
+        const std::string_view& subFilter,
+        const std::string_view& type,
+        const PdfSignatureBeacons& beacons);
+
     // To be called by SignDocument()
     void SetContentsByteRangeNoDirtySet(const bufferview& contents, PdfArray&& byteRange);
 

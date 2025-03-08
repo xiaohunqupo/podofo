@@ -9,6 +9,30 @@
 using namespace std;
 using namespace PoDoFo;
 
+constexpr string_view TestSignatureRefHash = "F867FF5A7746D5EE3C386975E5E275BA"sv;
+
+TEST_CASE("TestLoadCertificate")
+{
+    // Load a PEM certificate should fail
+
+    string cert;
+    TestUtils::ReadTestInputFile("mycert.pem", cert);
+
+    PdfSignerCms signer(cert);
+    try
+    {
+        // Dummy data append to enforce certificate load
+        signer.AppendData("");
+    }
+    catch (PdfError& err)
+    {
+        REQUIRE(err.GetCode() == PdfErrorCode::OpenSSLError);
+        return;
+    }
+
+    FAIL("It should fail while loading unsupported PEM certificate");
+}
+
 // Test signing with supplied private key
 TEST_CASE("TestSignature1")
 {
@@ -16,15 +40,19 @@ TEST_CASE("TestSignature1")
     auto inputPath = TestUtils::GetTestInputFilePath("TestSignature.pdf");
     auto outputPath = TestUtils::GetTestOutputFilePath("TestSignature1.pdf");
 
-    auto testSignature = [&](const shared_ptr<StreamDevice>& stream)
+    // RSA Private key coefficients in der PKCS1 format (binary)
+    string pkey1;
+    TestUtils::ReadTestInputFile("mykey-pkcs1.der", pkey1);
+
+    // RSA Private key coefficients in der PKCS8 format (binary)
+    string pkey8;
+    TestUtils::ReadTestInputFile("mykey-pkcs8.der", pkey8);
+
+    auto testSignature = [&](const shared_ptr<StreamDevice>& stream, const bufferview& pkey)
     {
         // X509 Certificate
         string cert;
         TestUtils::ReadTestInputFile("mycert.der", cert);
-
-        // RSA Private key coefficients in der format (binary)
-        string pkey;
-        TestUtils::ReadTestInputFile("mykey.der", pkey);
 
         PdfMemDocument doc(stream);
         auto& page = doc.GetPages().GetPageAt(0);
@@ -41,23 +69,23 @@ TEST_CASE("TestSignature1")
         stringstream ss;
         auto stream = std::make_shared<StandardStreamDevice>(ss);
         input.CopyTo(*stream);
-        testSignature(stream);
-        REQUIRE(ssl::ComputeMD5Str(ss.str()) == "312837C62DA72DBC13D588A2AD42BFC1");
+        testSignature(stream, pkey1);
+        REQUIRE(ssl::ComputeMD5Str(ss.str()) == TestSignatureRefHash);
     }
 
     {
         utls::ReadTo(buff, inputPath);
         auto stream = std::make_shared<BufferStreamDevice>(buff);
-        testSignature(stream);
-        REQUIRE(ssl::ComputeMD5Str(buff) == "312837C62DA72DBC13D588A2AD42BFC1");
+        testSignature(stream, pkey8);
+        REQUIRE(ssl::ComputeMD5Str(buff) == TestSignatureRefHash);
     }
 
     {
         fs::copy_file(fs::u8path(inputPath), fs::u8path(outputPath), fs::copy_options::overwrite_existing);
         auto stream = std::make_shared<FileStreamDevice>(outputPath, FileMode::Open);
-        testSignature(stream);
+        testSignature(stream, pkey8);
         utls::ReadTo(buff, outputPath);
-        REQUIRE(ssl::ComputeMD5Str(buff) == "312837C62DA72DBC13D588A2AD42BFC1");
+        REQUIRE(ssl::ComputeMD5Str(buff) == TestSignatureRefHash);
     }
 }
 
@@ -77,7 +105,7 @@ TEST_CASE("TestSignature2")
 
     // RSA Private key coefficients in der format (binary)
     string pkey;
-    TestUtils::ReadTestInputFile("mykey.der", pkey);
+    TestUtils::ReadTestInputFile("mykey-pkcs1.der", pkey);
 
     PdfMemDocument doc(stream);
     auto& page = doc.GetPages().GetPageAt(0);
@@ -95,10 +123,10 @@ TEST_CASE("TestSignature2")
     PoDoFo::SignDocument(doc, *stream, signer, signature, PdfSaveOptions::NoMetadataUpdate);
 
     utls::ReadTo(buff, outputPath);
-    REQUIRE(ssl::ComputeMD5Str(buff) == "312837C62DA72DBC13D588A2AD42BFC1");
+    REQUIRE(ssl::ComputeMD5Str(buff) == TestSignatureRefHash);
 }
 
-// Test sequential signing with external service
+// Test deferred signing with external service
 TEST_CASE("TestSignature3")
 {
     charbuff buff;
@@ -114,7 +142,7 @@ TEST_CASE("TestSignature3")
 
     // RSA Private key coefficients in der format (binary)
     string pkey;
-    TestUtils::ReadTestInputFile("mykey.der", pkey);
+    TestUtils::ReadTestInputFile("mykey-pkcs8.der", pkey);
 
     PdfMemDocument doc(stream);
     auto& page = doc.GetPages().GetPageAt(0);
@@ -125,17 +153,83 @@ TEST_CASE("TestSignature3")
     PdfSignerCmsParams params;
     auto signer = std::make_shared<PdfSignerCms>(cert, params);
     PdfSigningContext ctx;
-    ctx.SetSaveOptions(PdfSaveOptions::NoMetadataUpdate);
     auto signerId = ctx.AddSigner(signature, signer);
     PdfSigningResults results;
-    ctx.StartSigning(doc, stream, results);
+    ctx.StartSigning(doc, stream, results, PdfSaveOptions::NoMetadataUpdate);
     charbuff signedHash;
     ssl::DoSign(results.Intermediate[signerId], pkey, params.Hashing, signedHash);
     results.Intermediate[signerId] = signedHash;
     ctx.FinishSigning(results);
     
     utls::ReadTo(buff, outputPath);
-    REQUIRE(ssl::ComputeMD5Str(buff) == "312837C62DA72DBC13D588A2AD42BFC1");
+    REQUIRE(ssl::ComputeMD5Str(buff) == TestSignatureRefHash);
+}
+
+TEST_CASE("TestSignEncryptedDoc")
+{
+    auto inputPath = TestUtils::GetTestInputFilePath("AESV3R6-256.pdf");
+    auto outputPath = TestUtils::GetTestOutputFilePath("TestSignEncryptedDoc.pdf");
+
+    fs::copy_file(fs::u8path(inputPath), fs::u8path(outputPath), fs::copy_options::overwrite_existing);
+    auto stream = std::make_shared<FileStreamDevice>(outputPath, FileMode::Open);
+
+    // X509 Certificate
+    string cert;
+    TestUtils::ReadTestInputFile("mycert.der", cert);
+
+    // RSA Private key coefficients in der format (binary)
+    string pkey;
+    TestUtils::ReadTestInputFile("mykey-pkcs8.der", pkey);
+
+    auto date = PdfDate::ParseW3C("2024-07-31T17:03:42+02:00");
+
+    {
+        PdfMemDocument doc(stream, "userpass");
+        auto& page = doc.GetPages().GetPageAt(0);
+        auto& signature = page.CreateField<PdfSignature>("Signature", Rect());
+        signature.SetSignatureDate(date);
+        auto signer = PdfSignerCms(cert, pkey);
+        PoDoFo::SignDocument(doc, *stream, signer, signature, PdfSaveOptions::NoMetadataUpdate);
+    }
+
+    {
+        // Just reload the signed document with owner password as a simple test
+        PdfMemDocument doc(stream, "ownerpass");
+        auto& page = doc.GetPages().GetPageAt(0);
+        auto& annot = page.GetAnnotations().GetAnnotAt(0);
+        auto& field = dynamic_cast<PdfAnnotationWidget&>(annot).GetField();
+        auto& signature = dynamic_cast<PdfSignature&>(field);
+        REQUIRE(signature.GetSignatureDate() == date);
+    }
+}
+
+TEST_CASE("TestSaveOnSigning")
+{
+    PdfMemDocument doc;
+    auto& page = doc.GetPages().CreatePage(PdfPageSize::A4);
+    string x509certbuffer;
+    TestUtils::ReadTestInputFile("mycert.der", x509certbuffer);
+
+    string pkeybuffer;
+    TestUtils::ReadTestInputFile("mykey-pkcs8.der", pkeybuffer);
+
+    auto& signature = page.CreateField<PdfSignature>("Signature", Rect(100, 600, 100, 100));
+    signature.SetSignatureDate(PdfDate::LocalNow());
+    auto image = doc.CreateImage();
+    image->Load(TestUtils::GetTestInputFilePath("ReferenceImage.png"));
+    auto xformObj = doc.CreateXObjectForm(Rect(0, 0, image->GetWidth(), image->GetHeight()));
+
+    PdfPainter painter;
+    painter.SetCanvas(*xformObj);
+    painter.DrawImage(*image, 0, 0, 1, 1);
+    painter.FinishDrawing();
+
+    auto signer = PdfSignerCms(x509certbuffer, pkeybuffer);
+
+    signature.SetAppearanceStream(*xformObj);
+
+    FileStreamDevice output(TestUtils::GetTestOutputFilePath("TestSaveOnSigning.pdf"), FileMode::Create);
+    PoDoFo::SignDocument(doc, output, signer, signature, PdfSaveOptions::SaveOnSigning);
 }
 
 TEST_CASE("TestPdfSignerCms")
@@ -147,7 +241,7 @@ TEST_CASE("TestPdfSignerCms")
     charbuff buff;
     {
         PdfSignerCms signer(cert);
-        signer.ComputeSignatureSequential({ }, buff, true);
+        signer.ComputeSignatureDeferred({ }, buff, true);
 
         try
         {
@@ -155,7 +249,7 @@ TEST_CASE("TestPdfSignerCms")
         }
         catch (PdfError& error)
         {
-            // If a sequential signing is started we can't switch to event based
+            // If a deferred signing is started we can't switch to event based
             REQUIRE(error.GetCode() == PdfErrorCode::InternalLogic);
         }
     }
@@ -185,12 +279,57 @@ TEST_CASE("TestPdfSignerCms")
 
         try
         {
-            signer.ComputeSignatureSequential({ }, buff, true);
+            signer.ComputeSignatureDeferred({ }, buff, true);
         }
         catch (PdfError& error)
         {
-            // If a event based signing is started we can't switch to sequential
+            // If a event based signing is started we can't switch to deferred
             REQUIRE(error.GetCode() == PdfErrorCode::InternalLogic);
         }
+    }
+}
+
+TEST_CASE("TestGetPreviousRevision")
+{
+    {
+        charbuff currBuffer;
+
+        utls::ReadTo(currBuffer, TestUtils::GetTestInputFilePath("TestBlankSigned.pdf"));
+        auto input = std::make_shared<BufferStreamDevice>(currBuffer);
+
+        PdfMemDocument doc;
+        doc.Load(input);
+        auto& signature = dynamic_cast<PdfSignature&>(
+            dynamic_cast<PdfAnnotationWidget&>(
+                doc.GetPages().GetPageAt(0).GetAnnotations().GetAnnotAt(0)).GetField());
+
+        charbuff prevBuffer;
+        BufferStreamDevice output(prevBuffer);
+
+        REQUIRE(signature.TryGetPreviousRevision(*input, output));
+
+        charbuff refBuffer;
+        utls::ReadTo(refBuffer, TestUtils::GetTestInputFilePath("blank.pdf"));
+        REQUIRE(prevBuffer == refBuffer);
+    }
+
+    {
+        charbuff currBuffer;
+
+        utls::ReadTo(currBuffer, TestUtils::GetTestInputFilePath("TestSaveOnSigning.pdf"));
+        auto input = std::make_shared<BufferStreamDevice>(currBuffer);
+
+        PdfMemDocument doc;
+        doc.Load(input);
+        auto& signature = dynamic_cast<PdfSignature&>(
+            dynamic_cast<PdfAnnotationWidget&>(
+                doc.GetPages().GetPageAt(0).GetAnnotations().GetAnnotAt(0)).GetField());
+
+        charbuff prevBuffer;
+        BufferStreamDevice output(prevBuffer);
+
+        // This file is signed but has not incremental updates,
+        // so the previous revision is undefined
+        REQUIRE(!signature.TryGetPreviousRevision(*input, output));
     }
 }

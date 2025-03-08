@@ -9,6 +9,7 @@
 #include FT_TRUETYPE_TAGS_H
 #include FT_TRUETYPE_TABLES_H
 #include FT_FONT_FORMATS_H
+#include FT_CID_H
 
 using namespace std;
 using namespace PoDoFo;
@@ -40,9 +41,11 @@ namespace
     };
 }
 
-static PdfFontFileType determineTrueTypeFormat(FT_Face face);
+static PdfFontFileType determineFormatCFF(FT_Face face);
 static unsigned determineFaceSize(FT_Face face, vector<TableInfo>& tables, unsigned& tableDirSize);
 static FT_Face createFaceFromBuffer(const bufferview& view, unsigned faceIndex);
+static bool isTTCFont(FT_Face face);
+static bool isTTCFont(const bufferview& face);
 static bool tryExtractDataFromTTC(FT_Face face, charbuff& buffer);
 static void getDataFromFace(FT_Face face, charbuff& buffer);
 
@@ -54,7 +57,7 @@ FT_Library FT::GetLibrary()
         {
             // Initialize all the fonts stuff
             if (FT_Init_FreeType(&Library))
-                PODOFO_RAISE_ERROR(PdfErrorCode::FreeType);
+                PODOFO_RAISE_ERROR(PdfErrorCode::FreeTypeError);
         }
 
         ~Init()
@@ -66,24 +69,41 @@ FT_Library FT::GetLibrary()
         FT_Library Library;     // Handle to the freetype library
     };
 
-    static Init init;
+    thread_local Init init;
     return init.Library;
 }
 
 FT_Face FT::CreateFaceFromBuffer(const bufferview& view, unsigned faceIndex,
     charbuff& buffer)
 {
-    // Extract data and re-create the face
-    unique_ptr<struct FT_FaceRec_, decltype(&FT_Done_Face)> face(createFaceFromBuffer(view, faceIndex), FT_Done_Face);
-    if (tryExtractDataFromTTC(face.get(), buffer))
+    if (isTTCFont(view))
     {
+        auto face = createFaceFromBuffer(view, faceIndex);
+        unique_ptr<struct FT_FaceRec_, decltype(&FT_Done_Face)> face_(face, FT_Done_Face);
+
+        // Try to extract data from the TTC font, or just copy
+        // existing view to buffer if it fails
+        if (!tryExtractDataFromTTC(face, buffer))
+            buffer = view;
+
+        // Unconditionally re-create the face from the copied buffer
         return createFaceFromBuffer(buffer, 0);
     }
     else
     {
         buffer = view;
-        return face.release();
+        return createFaceFromBuffer(buffer, 0);
     }
+}
+
+FT_Face FT::ExtractCFFFont(FT_Face face, charbuff& buffer)
+{
+    FT_ULong size = 0;
+    FT_Error rc = FT_Load_Sfnt_Table(face, TTAG_CFF, 0, nullptr, &size);
+    CHECK_FT_RC(rc, FT_Load_Sfnt_Table);
+    buffer.resize(size);
+    rc = FT_Load_Sfnt_Table(face, TTAG_CFF, 0, (FT_Byte*)buffer.data(), &size);
+    return createFaceFromBuffer(buffer, 0);
 }
 
 // No check for TTC fonts
@@ -95,29 +115,32 @@ FT_Face FT::CreateFaceFromBuffer(const bufferview& view)
 FT_Face FT::CreateFaceFromFile(const string_view& filepath, unsigned faceIndex,
     charbuff& buffer)
 {
-    FT_Error rc;
-    FT_Face face_;
-    rc = FT_New_Face(FT::GetLibrary(), filepath.data(), faceIndex, &face_);
-    if (rc != 0)
-        return nullptr;
+    utls::ReadTo(buffer, filepath, sizeof(TTAG_ttcf));
+    if (isTTCFont(buffer))
+    {
+        FT_Error rc;
+        FT_Face face;
+        rc = FT_New_Face(FT::GetLibrary(), filepath.data(), faceIndex, &face);
+        if (rc != 0)
+            return nullptr;
 
-    // Extract data and re-create the face
-    unique_ptr<struct FT_FaceRec_, decltype(&FT_Done_Face)> face(face_, FT_Done_Face);
-    if (tryExtractDataFromTTC(face.get(), buffer))
-    {
-        return createFaceFromBuffer(buffer, 0);
+        unique_ptr<struct FT_FaceRec_, decltype(&FT_Done_Face)> face_(face, FT_Done_Face);
+
+        // Try to extract data from the TTC font and re-create the face
+        if (tryExtractDataFromTTC(face, buffer))
+            return createFaceFromBuffer(buffer, 0);
     }
-    else
-    {
-        utls::ReadTo(buffer, filepath);
-        return face.release();
-    }
+
+    // Unconditionally copy the font file and create
+    // the face from the copied buffer
+    utls::ReadTo(buffer, filepath);
+    return createFaceFromBuffer(buffer, 0);
 }
 
 charbuff FT::GetDataFromFace(FT_Face face)
 {
     charbuff buffer;
-    if (!tryExtractDataFromTTC(face, buffer))
+    if (!isTTCFont(face) || !tryExtractDataFromTTC(face, buffer))
         getDataFromFace(face, buffer);
 
     return buffer;
@@ -127,13 +150,30 @@ bool FT::TryGetFontFileFormat(FT_Face face, PdfFontFileType& format)
 {
     string_view formatstr = FT_Get_Font_Format(face);
     if (formatstr == "TrueType")
-        format = determineTrueTypeFormat(face);
+    {
+        format = PdfFontFileType::TrueType;
+    }
     else if (formatstr == "Type 1")
+    {
         format = PdfFontFileType::Type1;
+    }
     else if (formatstr == "CID Type 1")
-        format = PdfFontFileType::CIDType1;
+    {
+        // CID Type 1 fonts are a special PostScript font that are described
+        // in "Adobe Technical Note #5014, Adobe CMap and CIDFont Files
+        // Specification". The CIDFont format described there does not
+        // seems to be directly supported by PDF, and in ISO 32000-2:2020
+        // comments in this way "As mentioned earlier, PDF does not support
+        // the entire CID - keyed font architecture, which is independent
+        // of PDF; CID - keyed fonts may be used in other environments".
+        // See also https://github.com/pdf-association/pdf-issues/issues/497
+        format = PdfFontFileType::Unknown;
+        return false;
+    }
     else if (formatstr == "CFF")
-        format = PdfFontFileType::Type1CCF;
+    {
+        format = determineFormatCFF(face);
+    }
     else
     {
         format = PdfFontFileType::Unknown;
@@ -146,11 +186,8 @@ bool FT::TryGetFontFileFormat(FT_Face face, PdfFontFileType& format)
 bool FT::IsPdfSupported(FT_Face face)
 {
     PdfFontFileType format;
-    if (!FT::TryGetFontFileFormat(face, format) ||
-        !(format == PdfFontFileType::TrueType || format == PdfFontFileType::OpenType))
-    {
+    if (!FT::TryGetFontFileFormat(face, format))
         return false;
-    }
 
     return true;
 }
@@ -173,17 +210,38 @@ FT_Face createFaceFromBuffer(const bufferview& view, unsigned faceIndex)
     return face;
 }
 
-// Try to handle TTC font collections
-bool tryExtractDataFromTTC(FT_Face face, charbuff& buffer)
+bool isTTCFont(FT_Face face)
 {
     FT_Error rc;
     FT_ULong size;
 
     uint32_t tag;
-    size = sizeof(FT_ULong);
+    size = sizeof(uint32_t);
     rc = FT_Load_Sfnt_Table(face, 0, 0, (FT_Byte*)&tag, &size);
-    if (rc == 0 || FROM_BIG_ENDIAN(tag) != TTAG_ttcf)
+    if (rc == 0 && FROM_BIG_ENDIAN(tag) == TTAG_ttcf)
+        return true;
+
+    return false;
+}
+
+bool isTTCFont(const bufferview& face)
+{
+    uint32_t tag;
+    if (face.size() < sizeof(tag))
         return false;
+
+    std::memcpy(&tag, face.data(), sizeof(tag));
+    if (FROM_BIG_ENDIAN(tag) == TTAG_ttcf)
+        return true;
+
+    return false;
+}
+
+// Try to handle TTC font collections
+bool tryExtractDataFromTTC(FT_Face face, charbuff& buffer)
+{
+    FT_Error rc;
+    FT_ULong size;
 
     // First read the TTC font header and then determine the face offset
     TTCF_Header header;
@@ -195,6 +253,9 @@ bool tryExtractDataFromTTC(FT_Face face, charbuff& buffer)
     size = numFonts * sizeof(uint32_t);
     rc = FT_Load_Sfnt_Table(face, 0, sizeof(TTCF_Header), (FT_Byte*)offsets.data(), &size);
     CHECK_FT_RC(rc, FT_Load_Sfnt_Table);
+    if (face->face_index < 0 || static_cast<size_t>(face->face_index) >= offsets.size())
+        return false;
+
     uint32_t faceOffset = FROM_BIG_ENDIAN(offsets[face->face_index]);
 
     // Prepare the final buffer
@@ -244,79 +305,32 @@ void getDataFromFace(FT_Face face, charbuff& buffer)
     CHECK_FT_RC(rc, FT_Load_Sfnt_Table);
 }
 
-// Determines if the font is legacy TrueType or OpenType
-PdfFontFileType determineTrueTypeFormat(FT_Face face)
+// Determines if the font is a CCF table with an OTF container or not
+PdfFontFileType determineFormatCFF(FT_Face face)
 {
     FT_Error rc;
     FT_ULong size;
-    FT_ULong tag;
     rc = FT_Sfnt_Table_Info(face, 0, nullptr, &size);
-    CHECK_FT_RC(rc, FT_Sfnt_Table_Info);
-    for (FT_ULong i = 0, count = size; i < count; i++)
+    if (rc == 0)
     {
-        rc = FT_Sfnt_Table_Info(face, i, &tag, &size);
-        CHECK_FT_RC(rc, FT_Sfnt_Table_Info);
-        switch (tag)
-        {
-            // Legacy TrueType tables
-            // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
-            case TTAG_acnt:
-            case TTAG_ankr:
-            case TTAG_avar:
-            case TTAG_bdat:
-            case TTAG_bhed:
-            case TTAG_bloc:
-            case TTAG_bsln:
-            case TTAG_cmap:
-            case TTAG_cvar:
-            case TTAG_cvt:
-            case TTAG_EBSC:
-            case TTAG_fdsc:
-            case TTAG_feat:
-            case TTAG_fmtx:
-            case TTAG_fond:
-            case TTAG_fpgm:
-            case TTAG_fvar:
-            case TTAG_gasp:
-            case TTAG_gcid:
-            case TTAG_glyf:
-            case TTAG_gvar:
-            case TTAG_hdmx:
-            case TTAG_head:
-            case TTAG_hhea:
-            case TTAG_hmtx:
-            case TTAG_just:
-            case TTAG_kern:
-            case TTAG_kerx:
-            case TTAG_lcar:
-            case TTAG_loca:
-            case TTAG_ltag:
-            case TTAG_maxp:
-            case TTAG_meta:
-            case TTAG_mort:
-            case TTAG_morx:
-            case TTAG_name:
-            case TTAG_opbd:
-            case TTAG_OS2:
-            case TTAG_post:
-            case TTAG_prep:
-            case TTAG_prop:
-            case TTAG_sbix:
-            case TTAG_trak:
-            case TTAG_vhea:
-            case TTAG_vmtx:
-            case TTAG_xref:
-            case TTAG_Zapf:
-                // Continue on legacy tables
-                break;
-            default:
-                // Return OpenType on all other tables
-                return PdfFontFileType::OpenType;
-        }
+        return PdfFontFileType::OpenTypeCFF;
     }
+    else
+    {
+        // NOTE: Technical Note #5176 "The Compact Font Format Specification"
+        // says "The Top DICT begins with the SyntheticBase and ROS operators
+        // for synthetic and CIDFonts, respectively. Regular Type 1 fonts begin
+        // with some other operator. (This permits the determination of the
+        // kind of font without parsing the entire Top DICT)". We assume FreeType
+        // is able to make this distinction using the FT_IS_CID_KEYED macro
 
-    // Default legay TrueType
-    return PdfFontFileType::TrueType;
+        FT_Bool isCid = 0;
+        (void)FT_Get_CID_Is_Internally_CID_Keyed(face, &isCid);
+        if (isCid == 1)
+            return PdfFontFileType::CIDKeyedCFF;
+        else
+            return PdfFontFileType::Type1CFF;
+    }
 }
 
 unsigned determineFaceSize(FT_Face face, vector<TableInfo>& tables, unsigned& tableDirSize)

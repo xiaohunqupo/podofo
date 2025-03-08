@@ -8,10 +8,11 @@
 #define PDF_FONT_STANDARD14_DATA_H
 
 #include <podofo/main/PdfFontMetricsStandard14.h>
+#include <podofo/auxiliary/Corners.h>
 
 namespace PoDoFo {
 
-struct Standard14FontData
+struct Standard14FontData final
 {
     const unsigned short* Widths;
     unsigned WidthsSize;
@@ -28,7 +29,7 @@ struct Standard14FontData
     int16_t StemH;
     int16_t StrikeThroughPos;
     int16_t UnderlinePos;
-    Rect BBox;
+    Corners BBox;
 };
 
 using Std14CPToGIDMap = std::unordered_map<unsigned short, unsigned char>;

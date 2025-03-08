@@ -8,8 +8,7 @@
 #include "PdfPage.h"
 
 #include <regex>
-#include <deque>
-#include <stack>
+#include <list>
 
 #include <utf8cpp/utf8.h>
 
@@ -40,6 +39,12 @@ static constexpr float NaN = numeric_limits<float>::quiet_NaN();
 // 5.3 Text Objects
 struct TextState
 {
+    TextState()
+    {
+        // Reset font size
+        PdfState.FontSize = -1;
+    }
+
     Matrix T_rm;  // Current T_rm
     Matrix CTM;   // Current CTM
     Matrix T_m;   // Current T_m
@@ -47,11 +52,14 @@ struct TextState
     double T_l = 0;             // Leading text Tl
     PdfTextState PdfState;
     Vector2 WordSpacingVectorRaw;
+    Vector2 SpaceCharVectorRaw;
     double WordSpacingLength = 0;
+    double CharSpaceLength = 0;
     void ComputeDependentState();
-    void ComputeSpaceLength();
+    void ComputeSpaceDescriptors();
     void ComputeT_rm();
     double GetWordSpacingLength() const;
+    double GetSpaceCharLength() const;
     void ScanString(const PdfString& encodedStr, string& decoded, vector<double>& lengths, vector<unsigned>& positions);
 };
 
@@ -190,7 +198,9 @@ void PdfPage::ExtractTextTo(vector<PdfTextEntry>& entries, const string_view& pa
     ExtractionContext context(entries, *this, pattern, params.Flags, params.ClipRect);
 
     // Look FIGURE 4.1 Graphics objects
-    PdfContentStreamReader reader(*this);
+    PdfContentReaderArgs args;
+    args.Flags = PdfContentReaderFlags::SkipHandleNonFormXObjects; // Images are not needed for text extraction
+    PdfContentStreamReader reader(*this, args);
     PdfContent content;
     vector<double> lengths;
     vector<unsigned> positions;
@@ -201,8 +211,7 @@ void PdfPage::ExtractTextTo(vector<PdfTextEntry>& entries, const string_view& pa
         {
             case PdfContentType::Operator:
             {
-                if ((content.Warnings & PdfContentWarnings::InvalidOperator)
-                    != PdfContentWarnings::None)
+                if (content.Warnings != PdfContentWarnings::None)
                 {
                     // Ignore invalid operators
                     continue;
@@ -247,7 +256,7 @@ void PdfPage::ExtractTextTo(vector<PdfTextEntry>& entries, const string_view& pa
                         }
                         else
                         {
-                            throw runtime_error("Invalid flow");
+                            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InternalLogic, "Invalid flow");
                         }
 
                         break;
@@ -395,29 +404,31 @@ void PdfPage::ExtractTextTo(vector<PdfTextEntry>& entries, const string_view& pa
                 // Ignore image data token
                 break;
             }
-            case PdfContentType::DoXObject:
+            case PdfContentType::BeginFormXObject:
             {
-                if (content.XObject->GetType() == PdfXObjectType::Form)
-                {
-                    context.XObjectStateIndices.push_back({
-                        (const PdfXObjectForm*)content.XObject.get(),
-                        context.States.GetSize()
+                context.XObjectStateIndices.push_back({
+                    (const PdfXObjectForm*)content.XObject.get(),
+                    context.States.GetSize()
                     });
-                    context.States.Push();
-                }
+                context.States.Push();
 
                 break;
             }
-            case PdfContentType::EndXObjectForm:
+            case PdfContentType::EndFormXObject:
             {
                 PODOFO_ASSERT(context.XObjectStateIndices.size() != 0);
                 context.States.Pop(context.States.GetSize() - context.XObjectStateIndices.back().TextStateIndex);
                 context.XObjectStateIndices.pop_back();
                 break;
             }
+            case PdfContentType::DoXObject:
+            {
+                // Ignore handling of non Form XObjects
+                break;
+            }
             default:
             {
-                throw runtime_error("Unsupported PdfContentType");
+                PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidDataType, "Unsupported PdfContentType");
             }
         }
     }
@@ -678,9 +689,9 @@ bool decodeString(const PdfString &str, TextState &state, string &decoded,
             // CHECK-ME: Maybe intrepret them as PdfDocEncoding?
             decoded = str.GetString();
             lengths.resize(decoded.length());
-            positions.reserve(decoded.length());
+            positions.resize(decoded.length());
             for (unsigned i = 0; i < decoded.length(); i++)
-                positions.push_back(i);
+                positions[i] = i;
 
             return true;
         }
@@ -854,7 +865,7 @@ ExtractionContext::ExtractionContext(vector<PdfTextEntry>& entries, const PdfPag
     // Determine page rotation transformation
     double teta;
     if (page.HasRotation(teta))
-        Rotation = std::make_unique<Matrix>(PoDoFo::GetFrameRotationTransform(page.GetRectRaw(), teta));
+        Rotation = std::make_unique<Matrix>(PoDoFo::GetFrameRotationTransform((Rect)page.GetRectRaw(), teta));
 }
 
 void ExtractionContext::BeginText()
@@ -878,33 +889,47 @@ void ExtractionContext::Tf_Operator(const PdfName &fontname, double fontsize)
 {
     auto resources = getActualCanvas().GetResources();
     double spacingLengthRaw = 0;
+    double spaceCharLengthRaw = 0;
     States.Current->PdfState.FontSize = fontsize;
     if (resources == nullptr || (States.Current->PdfState.Font = resources->GetFont(fontname)) == nullptr)
+    {
         PoDoFo::LogMessage(PdfLogSeverity::Warning, "Unable to find font object {}", fontname.GetString());
+    }
     else
+    {
         spacingLengthRaw = States.Current->GetWordSpacingLength();
+        spaceCharLengthRaw = States.Current->GetSpaceCharLength();
+    }
 
     States.Current->WordSpacingVectorRaw = Vector2(spacingLengthRaw, 0);
     if (spacingLengthRaw == 0)
     {
-        PoDoFo::LogMessage(PdfLogSeverity::Warning, "Unable to provide a space size, setting default font size");
+        PoDoFo::LogMessage(PdfLogSeverity::Warning, "Unable to provide a word spacing length, setting default font size");
         States.Current->WordSpacingVectorRaw = Vector2(fontsize, 0);
     }
-    States.Current->ComputeSpaceLength();
+
+    States.Current->SpaceCharVectorRaw = Vector2(spaceCharLengthRaw, 0);
+    if (spaceCharLengthRaw == 0)
+    {
+        PoDoFo::LogMessage(PdfLogSeverity::Warning, "Unable to provide a space char length, setting default font size");
+        States.Current->SpaceCharVectorRaw = Vector2(fontsize, 0);
+    }
+
+    States.Current->ComputeSpaceDescriptors();
 }
 
 void ExtractionContext::cm_Operator(double a, double b, double c, double d, double e, double f)
 {
     // TABLE 4.7: "cm" Modify the current transformation
     // matrix (CTM) by concatenating the specified matrix
-    Matrix cm = Matrix::FromCoefficients(a, b, c, d, e, f);
+    Matrix cm(a, b, c, d, e, f);
     States.Current->CTM = cm * States.Current->CTM;
     States.Current->ComputeT_rm();
 }
 
 void ExtractionContext::Tm_Operator(double a, double b, double c, double d, double e, double f)
 {
-    States.Current->T_lm = Matrix::FromCoefficients(a, b, c, d, e, f);
+    States.Current->T_lm = Matrix(a, b, c, d, e, f);
     States.Current->T_m = States.Current->T_lm;
     States.Current->ComputeDependentState();
 }
@@ -1013,7 +1038,7 @@ void ExtractionContext::tryAddEntry(const StatefulString& currStr)
             {
                 if (Options.TokenizeWords
                     || distance + SEPARATION_EPSILON >
-                        States.Current->WordSpacingLength * HARD_SEPARATION_SPACING_MULTIPLIER)
+                        States.Current->CharSpaceLength * HARD_SEPARATION_SPACING_MULTIPLIER)
                 {
                     // Current entry is space separated and either we
                     //  tokenize words, or it's an hard entry separation
@@ -1211,13 +1236,14 @@ bool areEqual(double lhs, double rhs)
 
 void TextState::ComputeDependentState()
 {
-    ComputeSpaceLength();
+    ComputeSpaceDescriptors();
     ComputeT_rm();
 }
 
-void TextState::ComputeSpaceLength()
+void TextState::ComputeSpaceDescriptors()
 {
     WordSpacingLength = (WordSpacingVectorRaw * T_m.GetScalingRotation()).GetLength();
+    CharSpaceLength = (SpaceCharVectorRaw * T_m.GetScalingRotation()).GetLength();
 }
 
 void TextState::ComputeT_rm()
@@ -1228,6 +1254,11 @@ void TextState::ComputeT_rm()
 double TextState::GetWordSpacingLength() const
 {
     return PdfState.Font->GetWordSpacingLength(PdfState);
+}
+
+double TextState::GetSpaceCharLength() const
+{
+    return PdfState.Font->GetSpaceCharLength(PdfState);
 }
 
 void TextState::ScanString(const PdfString& encodedStr, string& decoded, vector<double>& lengths, vector<unsigned>& positions)

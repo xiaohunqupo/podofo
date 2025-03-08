@@ -38,19 +38,17 @@ void OpenSSLMain::Init()
     m_libCtx = OSSL_LIB_CTX_new();
     if (m_libCtx == nullptr)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "Unable to create OpenSSL library context");
-    
-    // NOTE: Load required legacy providers, such as RC4, together regular ones,
+
+    // NOTE: Try to load required legacy providers, such as RC4, together regular ones,
     // as explained in https://wiki.openssl.org/index.php/OpenSSL_3.0#Providers
     m_legacyProvider = OSSL_PROVIDER_load(m_libCtx, "legacy");
-    if (m_legacyProvider == nullptr)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "Unable to load legacy providers in OpenSSL >= 3.x.x");
-    
     m_defaultProvider = OSSL_PROVIDER_load(m_libCtx, "default");
     if (m_defaultProvider == nullptr)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "Unable to load default providers in OpenSSL >= 3.x.x");
-    
+
     // https://www.openssl.org/docs/man3.0/man7/crypto.html#FETCHING-EXAMPLES
-    m_Rc4 = EVP_CIPHER_fetch(m_libCtx, "RC4", "provider=legacy");
+    if (m_legacyProvider != nullptr)
+        m_Rc4 = EVP_CIPHER_fetch(m_libCtx, "RC4", "provider=legacy");
     m_Aes128 = EVP_CIPHER_fetch(m_libCtx, "AES-128-CBC", "provider=default");
     m_Aes256 = EVP_CIPHER_fetch(m_libCtx, "AES-256-CBC", "provider=default");
     m_MD5 = EVP_MD_fetch(m_libCtx, "MD5", "provider=default");
@@ -76,25 +74,33 @@ OpenSSLMain::~OpenSSLMain()
     if (m_libCtx == nullptr)
         return;
 
-    OSSL_LIB_CTX_free(m_libCtx);
     OSSL_PROVIDER_unload(m_legacyProvider);
     OSSL_PROVIDER_unload(m_defaultProvider);
+    OSSL_LIB_CTX_free(m_libCtx);
 #endif // OPENSSL_VERSION_MAJOR >= 3
 }
 
 // Add signing-certificate-v2 attribute as defined in rfc5035
 // https://tools.ietf.org/html/rfc5035
-void ssl::AddSigningCertificateV2(CMS_SignerInfo* signer, const bufferview& hash)
+void ssl::AddSigningCertificateV2(CMS_SignerInfo* signer, const bufferview& hash, PdfHashingAlgorithm hashing)
 {
+    unique_ptr<X509_ALGOR, decltype(&X509_ALGOR_free)> x509Algor(X509_ALGOR_new(), X509_ALGOR_free);
+    if (x509Algor == nullptr)
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error X509_ALGOR_new");
+
+    X509_ALGOR_set_md(x509Algor.get(), ssl::GetEVP_MD(hashing));
+
     unsigned char* buf = nullptr;
     MY_ESS_SIGNING_CERT_V2 certV2{ };
     ASN1_OCTET_STRING hashstr{ };
     ASN1_OCTET_STRING_set(&hashstr, (const unsigned char*)hash.data(), (int)hash.size());
     MY_ESS_CERT_ID_V2 certIdV2{ };
+
+    certIdV2.hash_alg = x509Algor.get();
     certIdV2.hash = &hashstr;
     certV2.cert_ids = sk_MY_ESS_CERT_ID_V2_new_null();
     if (!sk_MY_ESS_CERT_ID_V2_push(certV2.cert_ids, &certIdV2))
-        throw runtime_error("Unable to add attribute");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Unable to add attribute");
 
     auto clean = [&]()
     {
@@ -107,7 +113,7 @@ void ssl::AddSigningCertificateV2(CMS_SignerInfo* signer, const bufferview& hash
         V_ASN1_SEQUENCE, buf, len) <= 0)
     {
         clean();
-        throw runtime_error("Unable to add attribute");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Unable to add attribute");
     }
 
     clean();
@@ -118,7 +124,11 @@ EVP_PKEY* ssl::LoadPrivateKey(const bufferview& input)
     const unsigned char* data = (const unsigned char*)input.data();
     auto ret = d2i_PrivateKey(EVP_PKEY_RSA, nullptr, &data, (long)input.size());
     if (ret == nullptr)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidKey, "Unable to load private key");
+    {
+        string err("Private key loading failed. Internal OpenSSL error:\n");
+        ssl::GetOpenSSLError(err);
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, err);
+    }
 
     return ret;
 }
@@ -131,7 +141,7 @@ void ssl::cmsAddSigningTime(CMS_SignerInfo* si, const date::sys_seconds& timesta
         ans1time->type, ans1time, -1) <= 0)
     {
         ASN1_TIME_free(ans1time);
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error setting SigningTime");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error setting SigningTime");
     }
 }
 
@@ -150,14 +160,14 @@ void ssl::DoSign(const bufferview& input, EVP_PKEY* pkey,
     size_t siglen;
     unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> ctx(EVP_PKEY_CTX_new(pkey, nullptr), EVP_PKEY_CTX_free);
     if (ctx == nullptr)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error EVP_PKEY_CTX_new");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error EVP_PKEY_CTX_new");
 
     if (EVP_PKEY_sign_init(ctx.get()) <= 0)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error EVP_PKEY_sign_init");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error EVP_PKEY_sign_init");
 
     // Set deterministic PKCS1 padding
     if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PADDING) <= 0)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error EVP_PKEY_CTX_set_rsa_padding");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error EVP_PKEY_CTX_set_rsa_padding");
 
     auto actualInput = input;
     charbuff tempWrapped;
@@ -168,13 +178,13 @@ void ssl::DoSign(const bufferview& input, EVP_PKEY* pkey,
     }
     
     if (EVP_PKEY_sign(ctx.get(), nullptr, &siglen, (const unsigned char*)actualInput.data(), actualInput.size()) <= 0)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error determining output size");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error determining output size");
 
     output.resize(siglen);
     if (EVP_PKEY_sign(ctx.get(), (unsigned char*)output.data(), &siglen,
         (const unsigned char*)actualInput.data(), actualInput.size()) <= 0)
     {
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error signing input buffer");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error signing input buffer");
     }
 }
 
@@ -185,7 +195,7 @@ charbuff ssl::GetEncoded(const X509* cert)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OutOfMemory, "BIO_new failed");
 
     if (i2d_X509_bio(bio.get(), const_cast<X509*>(cert)) == 0)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "i2d_X509_bio failed");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "i2d_X509_bio failed");
 
     char* signatureData;
     size_t length = (size_t)BIO_get_mem_data(bio.get(), &signatureData);
@@ -202,7 +212,7 @@ charbuff ssl::GetEncoded(const EVP_PKEY* pkey)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OutOfMemory, "BIO_new failed");
 
     if (i2d_PrivateKey_bio(bio.get(), const_cast<EVP_PKEY*>(pkey)) == 0)
-        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "i2d_PrivateKey_bio failed");
+        PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "i2d_PrivateKey_bio failed");
 
     char* signatureData;
     size_t length = (size_t)BIO_get_mem_data(bio.get(), &signatureData);
@@ -289,42 +299,30 @@ void ssl::ComputeHash(const bufferview& data, PdfHashingAlgorithm hashing,
     computeHash(data, ssl::GetEVP_MD(hashing), hash, length);
 }
 
-void ssl::ComputeMD5Str(const bufferview& data, unsigned char* hash, unsigned& length)
+void ssl::ComputeMD5(const bufferview& data, unsigned char* hash)
 {
+    unsigned length;
     computeHash(data, ssl::MD5(), hash, length);
 }
 
-void ssl::ComputeSHA1Str(const bufferview& data, unsigned char* hash, unsigned& length)
+void ssl::ComputeSHA1(const bufferview& data, unsigned char* hash)
 {
+    unsigned length;
     computeHash(data, ssl::SHA1(), hash, length);
 }
 
-void computeHash(const bufferview& data, const EVP_MD* type,
-    unsigned char* hash, unsigned& length)
+void ssl::GetOpenSSLError(string& err)
 {
-    unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    if (EVP_DigestInit(ctx.get(), type) == 0)
-        goto Error;
+    string ret;
+    BIO* bio = BIO_new(BIO_s_mem());
+    if (bio == nullptr)
+        return;
 
-    // Compute the hash to be signed
-    if (EVP_DigestUpdate(ctx.get(), data.data(), data.size()) == 0)
-        goto Error;
-
-    if (EVP_DigestFinal(ctx.get(), hash, &length) == 0)
-        goto Error;
-
-    return;
-
-Error:
-    PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSL, "Error while computing hash");
-}
-
-string computeHashStr(const bufferview& data, const EVP_MD* type)
-{
-    unsigned char hash[EVP_MAX_MD_SIZE];
-    unsigned length;
-    computeHash(data, type, hash, length);
-    return utls::GetCharHexString({ (const char*)hash, length });
+    ERR_print_errors(bio);
+    char* buf;
+    size_t len = BIO_get_mem_data(bio, &buf);
+    err.append(buf, len);
+    BIO_free(bio);
 }
 
 const EVP_CIPHER* ssl::Rc4()
@@ -373,4 +371,32 @@ const EVP_MD* ssl::SHA512()
 {
     ssl::Init();
     return s_SSL.GetSHA512();
+}
+
+void computeHash(const bufferview& data, const EVP_MD* type,
+    unsigned char* hash, unsigned& length)
+{
+    unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    if (EVP_DigestInit(ctx.get(), type) == 0)
+        goto Error;
+
+    // Compute the hash to be signed
+    if (EVP_DigestUpdate(ctx.get(), data.data(), data.size()) == 0)
+        goto Error;
+
+    if (EVP_DigestFinal(ctx.get(), hash, &length) == 0)
+        goto Error;
+
+    return;
+
+Error:
+    PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error while computing hash");
+}
+
+string computeHashStr(const bufferview& data, const EVP_MD* type)
+{
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned length;
+    computeHash(data, type, hash, length);
+    return utls::GetCharHexString({ (const char*)hash, length });
 }

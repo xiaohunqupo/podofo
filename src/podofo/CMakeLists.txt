@@ -22,6 +22,11 @@ include_directories(
 
 add_subdirectory(private)
 
+if (MSVC)
+    # Silence linking warnings of podofo_private accessing main podofo symbols
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /ignore:4217 /ignore:4286")
+endif()
+
 set(PODOFO_BASE_HEADERS
     podofo.h
 )
@@ -39,21 +44,15 @@ endif()
 # Set visual studio source group
 source_group("" FILES ${PODOFO_SOURCES})
 
-macro(add_source subdir subdir_path)
-    file(GLOB_RECURSE SOURCE_FILES "${subdir_path}/*")
-    # Set visual studio source group
-    source_group(${subdir} FILES ${SOURCE_FILES})
-    # Add subdir to source files
-    list(APPEND PODOFO_SOURCES ${SOURCE_FILES})
-    # Set non private headers for install
-    set(HEADER_FILES ${SOURCE_FILES})
-    list(FILTER HEADER_FILES EXCLUDE REGEX "\.cpp$")
-endmacro()
-
-foreach(subdir main auxiliary staging)
-    add_source(${subdir} "${CMAKE_CURRENT_SOURCE_DIR}/${subdir}")
+# Add subdirectiories and set for install public headers
+foreach(subdir main auxiliary optional staging)
+    set(HEADER_FILES)
+    add_source(${subdir} "${CMAKE_CURRENT_SOURCE_DIR}/${subdir}" PODOFO_SOURCES HEADER_FILES)
     install(FILES ${HEADER_FILES} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/podofo/${subdir}")
 endforeach()
+
+# Set to install further public 3rdparty headers
+install(FILES "${PROJECT_SOURCE_DIR}/3rdparty/span.hpp" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/podofo/3rdparty")
 
 if(NOT PODOFO_HAVE_FONTCONFIG)
     # Remove FontConfig source if not needed
@@ -63,22 +62,20 @@ if(NOT PODOFO_HAVE_FONTCONFIG)
     )
 endif()
 
-add_source("3rdparty/pdfium" "${PROJECT_SOURCE_DIR}/3rdparty/pdfium")
-
 add_compile_definitions(PODOFO_BUILD)
 
 if(PODOFO_BUILD_STATIC)
     message("Building static podofo library")
     add_library(podofo_static STATIC ${PODOFO_SOURCES})
     add_library(podofo::podofo ALIAS podofo_static)
-    target_link_libraries(podofo_static podofo_private ${PODOFO_LIB_DEPENDS})
+    target_link_libraries(podofo_static podofo_private podofo_3rdparty ${PODOFO_LIB_DEPENDS})
     set_target_properties(podofo_static PROPERTIES
         VERSION "${PODOFO_VERSION}"
         SOVERSION "${PODOFO_SOVERSION}"
         CLEAN_DIRECT_OUTPUT 1
         OUTPUT_NAME "podofo"
     )
-    install(TARGETS podofo_static podofo_private
+    install(TARGETS podofo_static podofo_private podofo_3rdparty
         EXPORT podofo-config
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -95,7 +92,7 @@ if(PODOFO_BUILD_SHARED)
     message("Building shared podofo library")
     add_library(podofo_shared SHARED ${PODOFO_SOURCES})
     add_library(podofo::podofo ALIAS podofo_shared)
-    target_link_libraries(podofo_shared PRIVATE podofo_private ${PODOFO_LIB_DEPENDS})
+    target_link_libraries(podofo_shared PRIVATE podofo_private podofo_3rdparty ${PODOFO_LIB_DEPENDS})
     # TODO: set /wd4251 flag if we're doing a debug build with
     # Visual Studio, since it produces invalid warnings about STL
     # use.

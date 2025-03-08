@@ -52,7 +52,7 @@ void HelloWorld(const string_view& filename)
         // 
         // You have to pass only one argument, i.e. the page size of the page to create.
         // There are predefined enums for some common page sizes.
-        auto& page = document.GetPages().CreatePage(PdfPage::CreateStandardPageSize(PdfPageSize::A4));
+        auto& page = document.GetPages().CreatePage(PdfPageSize::A4);
 
         // Set the page as drawing target for the PdfPainter.
         // Before the painter can draw, a page has to be set first.
@@ -122,7 +122,7 @@ void HelloWorld(const string_view& filename)
         // The last step is to close the document.
         document.Save(filename);
     }
-    catch (PdfError& e)
+    catch (PdfError&)
     {
         // All PoDoFo methods may throw exceptions
         // make sure that painter.FinishPage() is called
@@ -136,7 +136,7 @@ void HelloWorld(const string_view& filename)
             // Ignore errors this time
         }
 
-        throw e;
+        throw;
     }
 }
 

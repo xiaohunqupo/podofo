@@ -18,14 +18,15 @@ namespace PoDoFo {
 
 /** Type of the content read from a content stream
  */
-enum class PdfContentType
+enum class PdfContentType : uint8_t
 {
     Unknown = 0,
     Operator,          ///< The token is a PDF operator
     ImageDictionary,   ///< Inline image dictionary
     ImageData,         ///< Raw inline image data found between ID and EI tags (see PDF ref section 4.8.6)
-    DoXObject,         ///< Issued when a Do operator is found and it is handled by the reader
-    EndXObjectForm,    ///< Issued when the end of a XObject form is detected
+    DoXObject,         ///< Issued when a Do operator is found and it is handled by the reader. NOTE: for Form XObjects BeginFormXObject is issued instead, unless PdfContentReaderFlags::SkipFollowFormXObject is used. 
+    BeginFormXObject,  ///< Issued when a Form XObject is being followed
+    EndFormXObject,    ///< Issued when a Form XObject has just been followed
     UnexpectedKeyword, ///< An unexpected keyword that can be a custom operator or invalid PostScript content   
 };
 
@@ -42,7 +43,7 @@ enum class PdfContentWarnings
 
 /** Content as read from content streams
  */
-struct PdfContent
+struct PODOFO_API PdfContent final
 {
     PdfContentType Type = PdfContentType::Unknown;
     PdfContentWarnings Warnings = PdfContentWarnings::None;
@@ -59,7 +60,8 @@ enum class PdfContentReaderFlags
 {
     None = 0,
     ThrowOnWarnings = 1,
-    DontFollowXObjectForms = 2, ///< Don't follow XObject Forms. Valid XObects are still reported as such
+    SkipFollowFormXObjects = 2,     ///< Don't follow Form XObject 
+    SkipHandleNonFormXObjects = 4,  ///< Don't handle non Form XObjects (PdfImage, PdfXObjectPostScript). Doesn't influence traversing of Form XObject(s)
 };
 
 /** Custom handler for inline images
@@ -68,7 +70,7 @@ enum class PdfContentReaderFlags
  */
 using PdfInlineImageHandler = std::function<bool(const PdfDictionary& imageDict, InputStreamDevice& device)>;
 
-struct PdfContentReaderArgs
+struct PODOFO_API PdfContentReaderArgs final
 {
     PdfContentReaderFlags Flags = PdfContentReaderFlags::None;
     PdfInlineImageHandler InlineImageHandler;
@@ -97,13 +99,13 @@ private:
 
     bool tryReadNextContent(PdfContent& content);
 
-    bool tryHandleOperator(PdfContent& content);
+    bool tryHandleOperator(PdfContent& content, bool& eof);
 
     bool tryReadInlineImgDict(PdfContent& content);
 
     bool tryReadInlineImgData(charbuff& data);
 
-    void tryFollowXObject(PdfContent& content);
+    bool tryHandleXObject(PdfContent& content);
 
     void handleWarnings();
 
