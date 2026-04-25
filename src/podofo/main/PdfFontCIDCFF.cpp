@@ -3,7 +3,7 @@
 
 #include <podofo/private/PdfDeclarationsPrivate.h>
 #include "PdfFontCIDCFF.h"
-#include <podofo/private/FontUtils.h>
+#include <podofo/private/FontUtilsAFDKO.h>
 
 using namespace std;
 using namespace PoDoFo;
@@ -21,6 +21,6 @@ void PdfFontCIDCFF::embedFontFileSubset(const vector<PdfCharGIDInfo>& infos,
     const PdfCIDSystemInfo& cidInfo)
 {
     charbuff buffer;
-    PoDoFo::SubsetFontCFF(GetMetrics(), infos, cidInfo, buffer);
+    afdko::SubsetFontCFF(GetMetrics(), infos, cidInfo, buffer);
     EmbedFontFileCFF(GetDescriptor().GetDictionary(), buffer, true);
 }

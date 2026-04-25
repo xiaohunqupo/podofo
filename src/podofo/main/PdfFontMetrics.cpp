@@ -6,7 +6,7 @@
 #include "PdfFontMetrics.h"
 
 #include <podofo/private/FreetypePrivate.h>
-#include <podofo/private/FontUtils.h>
+#include <podofo/private/FontUtilsAFDKO.h>
 
 #include "PdfArray.h"
 #include "PdfDictionary.h"
@@ -92,7 +92,7 @@ unique_ptr<const PdfFontMetrics> PdfFontMetrics::CreateMergedMetrics(bool skipNo
             // Unconditionally convert the Type1 font to CFF: this allow
             // the font file to be inserted in a CID font
             charbuff cffDest;
-            PoDoFo::ConvertFontType1ToCFF(GetOrLoadFontFileData(), cffDest);
+            afdko::ConvertFontType1ToCFF(GetOrLoadFontFileData(), cffDest);
             auto face = FT::CreateFaceFromBuffer(cffDest);
             auto ret = unique_ptr<PdfFontMetricsFreetype>(new PdfFontMetricsFreetype(
                 face.get(), datahandle(std::move(cffDest)), this));
@@ -123,7 +123,7 @@ unique_ptr<PdfFontMetrics> PdfFontMetrics::CreateFromFace(FT_Face face, unique_p
             // Unconditionally convert the Type1 font to CFF: this allow
             // the font file to be inserted in a CID font
             charbuff cffDest;
-            PoDoFo::ConvertFontType1ToCFF(*buffer, cffDest);
+            afdko::ConvertFontType1ToCFF(*buffer, cffDest);
             auto newface = FT::CreateFaceFromBuffer(cffDest);
             auto ret = unique_ptr<PdfFontMetricsFreetype>(new PdfFontMetricsFreetype(
                 newface.get(), datahandle(std::move(cffDest)), refMetrics));

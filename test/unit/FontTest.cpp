@@ -5,7 +5,7 @@
 #include <PdfTest.h>
 
 #include <podofo/private/FreetypePrivate.h>
-#include <podofo/private/FontUtils.h>
+#include <podofo/private/FontUtilsAFDKO.h>
 
 using namespace std;
 using namespace PoDoFo;
@@ -73,7 +73,7 @@ TEST_CASE("TestConversionPBF2CFF")
         utls::ReadTo(font1, TestUtils::GetTestInputFilePath("FontsType1", "Lato-Regular.pfb"));
 
         charbuff cff;
-        PoDoFo::ConvertFontType1ToCFF(font1, cff);
+        afdko::ConvertFontType1ToCFF(font1, cff);
 
         TestUtils::IsBufferEqual(cff, TestUtils::GetTestInputFilePath("FontsType1", "ConvCFF", "Lato-Regular.cff"));
     }
@@ -83,7 +83,7 @@ TEST_CASE("TestConversionPBF2CFF")
         utls::ReadTo(font1, TestUtils::GetTestInputFilePath("FontsType1", "lmb10.pfb"));
 
         charbuff cff;
-        PoDoFo::ConvertFontType1ToCFF(font1, cff);
+        afdko::ConvertFontType1ToCFF(font1, cff);
 
         TestUtils::IsBufferEqual(cff, TestUtils::GetTestInputFilePath("FontsType1", "ConvCFF", "lmb10.cff"));
     }
@@ -104,7 +104,7 @@ TEST_CASE("TestSubsetCFFDegenerate")
     cidInfo.Supplement = 0;
 
     charbuff cff;
-    PoDoFo::SubsetFontCFF(*metrics, subsetInfos, cidInfo, cff);
+    afdko::SubsetFontCFF(*metrics, subsetInfos, cidInfo, cff);
 
     TestUtils::IsBufferEqual(cff, TestUtils::GetTestInputFilePath("FontsType1", "SubsetDegenerate1Glyph.cff"));
 }

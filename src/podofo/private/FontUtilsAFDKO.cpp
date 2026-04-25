@@ -7,7 +7,7 @@
  // License: https://github.com/adobe-type-tools/afdko?tab=License-1-ov-file#readme
 
 #include "PdfDeclarationsPrivate.h"
-#include "FontUtils.h"
+#include "FontUtilsAFDKO.h"
 #include <afdko/include/cffwrite.h>
 #include <afdko/include/t1read.h>
 #include <afdko/include/cffread.h>
@@ -744,7 +744,7 @@ static void doConversion(ConvCtxPtr h)
     }
 }
 
-void PoDoFo::ConvertFontType1ToCFF(const bufferview& src, charbuff& dst)
+void afdko::ConvertFontType1ToCFF(const bufferview& src, charbuff& dst)
 {
     ConvCtx ctx(src, dst);
     setModeCFF(&ctx);
@@ -754,7 +754,7 @@ void PoDoFo::ConvertFontType1ToCFF(const bufferview& src, charbuff& dst)
     ctx.dst.endset(&ctx);
 }
 
-void PoDoFo::SubsetFontCFF(const PdfFontMetrics& metrics, const cspan<PdfCharGIDInfo>& subsetInfos,
+void afdko::SubsetFontCFF(const PdfFontMetrics& metrics, const cspan<PdfCharGIDInfo>& subsetInfos,
     const PdfCIDSystemInfo& cidInfo, charbuff& dst)
 {
     PODOFO_ASSERT(metrics.GetFontFileType() == PdfFontFileType::Type1CFF
