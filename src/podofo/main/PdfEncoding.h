@@ -90,8 +90,8 @@ namespace PoDoFo
         /** Encoding with an external encoding map storage
          * Used by PdfFont in case of dynamic encoding requested
          */
-        static std::unique_ptr<PdfEncoding> CreateDynamicEncoding(const std::shared_ptr<PdfCharCodeMap>& cidMap,
-            const std::shared_ptr<PdfCharCodeMap>& toUnicodeMap, PdfFont& font);
+        static std::unique_ptr<PdfEncoding> CreateDynamicEncoding(std::shared_ptr<PdfCharCodeMap>&& cidMap,
+            std::shared_ptr<PdfCharCodeMap>&& toUnicodeMap, PdfFont& font);
 
     public:
         /**

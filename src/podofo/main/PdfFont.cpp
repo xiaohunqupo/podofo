@@ -39,7 +39,9 @@ PdfFont::PdfFont(PdfDocument& doc, PdfFontType type, PdfFontMetricsConstPtr&& me
     m_Type(type),
     m_WordSpacingLengthRaw(-1),
     m_SpaceCharLengthRaw(-1),
-    m_Metrics(std::move(metrics))
+    m_Metrics(std::move(metrics)),
+    m_DynamicCIDMap(nullptr),
+    m_DynamicToUnicodeMap(nullptr)
 {
     if (m_Metrics == nullptr)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "Metrics must me not null");
@@ -53,7 +55,9 @@ PdfFont::PdfFont(PdfObject& obj, PdfFontType type, PdfFontMetricsConstPtr&& metr
     m_Type(type),
     m_WordSpacingLengthRaw(-1),
     m_SpaceCharLengthRaw(-1),
-    m_Metrics(std::move(metrics))
+    m_Metrics(std::move(metrics)),
+    m_DynamicCIDMap(nullptr),
+    m_DynamicToUnicodeMap(nullptr)
 {
     if (m_Metrics == nullptr)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::InvalidHandle, "Metrics must me not null");
@@ -152,9 +156,11 @@ void PdfFont::initBase(const PdfEncoding& encoding)
 
     if (encoding.IsNull())
     {
-        m_DynamicCIDMap = std::make_shared<PdfCharCodeMap>();
-        m_DynamicToUnicodeMap = std::make_shared<PdfCharCodeMap>();
-        m_Encoding = PdfEncoding::CreateDynamicEncoding(m_DynamicCIDMap, m_DynamicToUnicodeMap, *this);
+        auto dynamicCIDMap = std::make_shared<PdfCharCodeMap>();
+        auto dynamicToUnicodeMap = std::make_shared<PdfCharCodeMap>();
+        m_DynamicCIDMap = dynamicCIDMap.get();
+        m_DynamicToUnicodeMap = dynamicToUnicodeMap.get();
+        m_Encoding = PdfEncoding::CreateDynamicEncoding(std::move(dynamicCIDMap), std::move(dynamicToUnicodeMap), *this);
     }
     else
     {

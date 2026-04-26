@@ -485,8 +485,8 @@ private:
 protected:
     PdfFontMetricsConstPtr m_Metrics;
     std::unique_ptr<PdfEncoding> m_Encoding;
-    std::shared_ptr<PdfCharCodeMap> m_DynamicCIDMap;
-    std::shared_ptr<PdfCharCodeMap> m_DynamicToUnicodeMap;
+    PdfCharCodeMap* m_DynamicCIDMap;
+    PdfCharCodeMap* m_DynamicToUnicodeMap;
 };
 
 };
