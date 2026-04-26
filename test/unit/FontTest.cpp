@@ -5,7 +5,9 @@
 #include <PdfTest.h>
 
 #include <podofo/private/FreetypePrivate.h>
+#ifdef PODOFO_ENABLE_AFDKO
 #include <podofo/private/FontUtilsAFDKO.h>
+#endif
 
 using namespace std;
 using namespace PoDoFo;
@@ -66,6 +68,7 @@ TEST_CASE("TestFontConfigMatch")
     }
 }
 
+#ifdef PODOFO_ENABLE_AFDKO
 TEST_CASE("TestConversionPBF2CFF")
 {
     {
@@ -108,6 +111,7 @@ TEST_CASE("TestSubsetCFFDegenerate")
 
     TestUtils::IsBufferEqual(cff, TestUtils::GetTestInputFilePath("FontsType1", "SubsetDegenerate1Glyph.cff"));
 }
+#endif
 
 // Disable load all fonts for now
 TEST_CASE("TestFonts", "[.]")

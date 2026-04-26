@@ -32,7 +32,7 @@ PoDoFo bundles or includes code from the following third-party projects:
    - License: OpenSSL License
    - Copyright (c) 1998-2022 The OpenSSL Project. All rights reserved.
 
-3. Adobe AFDKO (Adobe Font Development Kit for OpenType)
+3. Adobe Font Development Kit for OpenType [Optional, default enabled]
    - Location: 3rdparty/adobe/afdko, src/podofo/private/FontUtils_AFDKO.cpp
    - License: Apache License 2.0
    - Copyright (c) 2014-2021 Adobe. All rights reserved.
