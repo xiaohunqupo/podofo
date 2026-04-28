@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2023 Francesco Pretto <ceztko@gmail.com>
-// SPDX-License-Identifier: LGPL-2.0-or-later OR MPL-2.0
+// SPDX-License-Identifier: (LGPL-2.0-or-later WITH cryptsetup-OpenSSL-exception) OR MPL-2.0
 
 #include <podofo/private/PdfDeclarationsPrivate.h>
 #include "OpenSSLInternal.h"
