@@ -377,7 +377,7 @@ Rect PdfDocument::FillXObjectFromPage(PdfXObjectForm& xobj, const PdfPage& page,
         xobj.GetDictionary().AddKey("Resources"_n, *pageObj.GetDictionary().GetKey("Resources"));
 
     // without /Group the viewer resets to default compositing, dropping the
-    // page's isolated/knockout flags and color space (ISO 32000-1 §11.6.6)
+    // page's isolated/knockout flags and color space (ISO 32000-2:2020 11.6.6 "Transparency group XObjects")
     if (pageObj.IsDictionary())
     {
         auto* groupObj = pageObj.GetDictionary().GetKey("Group");
