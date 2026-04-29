@@ -1,6 +1,3 @@
-### 1.1
-- Issues in https://github.com/podofo/podofo/milestone/2
-
 ### After 1.1
 - PdfPredictorDecoder: Support BitsPerComponent != 8
 - PdfColorSpaceFilterIndexed::GetSourceScanLineSize() handle bitsPerComponent != 8

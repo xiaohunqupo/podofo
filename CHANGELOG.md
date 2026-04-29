@@ -1,12 +1,62 @@
-## Version 1.1.0-dev
-- PoDoFo is now licensed under the MPL-2.0 or LGPLv2+ license terms
-- Added support for ECDSA encryption
+## Version 1.1.0
+- PoDoFo is now licensed under the LGPLv2+ or MPL-2.0 license terms
+- Added support for ECDSA signing
 - Added resumable signing context feature with functions `PdfSigningContext::DumpInPlace()` and `PdfSigningContext::Restore()`
-- Added `PdfXMPPAcket::PruneAndValidate(pdfaLevel)`
-- PdfParser: Try to rebuild the index if cross reference
-  sections parsing fails
+- Added `PdfXMPPAcket::PruneAndValidate(pdfaLevel)` for XMP validation
+- PdfParser: Try to rebuild the index if cross reference sections parsing fails
 - Added initial support for several raw images with /BitsPerComponent != 8
+- Added support for updating/signing files with data offset before `%PDF-` magic
+- Added support for updating/signing files with broken XRef sections
 - Added support for devendoring 3rd party dependencies
+- AFDKO: Integration made optional (still enabled by default)
+- Added support for PEM encoded X509 certificate loading
+- Fixed AESV3 permission encryption
+- Improved `PdfPainter` exception-safety for text drawing and XObject operations
+- Improved `FillXObjectFromPage` to copy `/Group` dictionary, preserving transparency
+- Improved `PdfFont` subsetting to include `/ToUnicode` maps
+- Improved `PdfSignature` with `SetCreatingApplication()` and `SetCreationApplication()`
+- Fixed `std::terminate` on malformed XRef stream during document load
+- Fixed potential double-free in OpenSSL `compute_hash_to_sign()`
+- Fixed `PdfXObjectForm` incorrect `BBox` and `Matrix` for rotated source pages
+- Fixed painting to the same page more than twice
+- Fixed several memory leaks in CMS signing and AFDKO wrapper
+- Fixed retrieval of document keyword list
+- Fixed retrieval of font metrics ascent/descent in FreeType
+- Fixed various infinite loops and UB in CMap parser and `PdfCharCodeMap`
+- Fixed handling of `/Type1` and `/TrueType` standard 14 like fonts without `/FontDescriptor`
+- Added support for devendoring 3rd party libraries: `date`, `fast_float`, `fmt`, `utf8cpp`, `utf8proc`, `span`
+- Fixed and updated GitHub Actions workflows and 3rd party dependencies
+
+## Version 1.0.4
+- Fixed [#314](https://github.com/podofo/podofo/issues/314), [#317](https://github.com/podofo/podofo/issues/317),
+  [#318](https://github.com/podofo/podofo/issues/318), [#335](https://github.com/podofo/podofo/issues/335),
+  [#336](https://github.com/podofo/podofo/issues/336), [#337](https://github.com/podofo/podofo/issues/337)
+- `OpenSSLInternal`: Fixed potential double-free in `compute_hash_to_sign()`
+- CMS signing: Fixed minor/potential memory leaks
+- `FillXObjectFromPage`: Copy `/Group` dictionary to preserve transparency compositing (#337)
+- `PdfPainter`: Fix exception-safety for text drawing and XObject operations (#336)
+- `PdfXObjectForm`: Fix incorrect `BBox` and `Matrix` for rotated source pages in `FillFromPage` (#335)
+- `PdfContents`: Fixed painting to the same page more than twice (#317)
+- `PdfFontMetricsObject`: Handle scalars in the widths array that are cross references
+- `PdfTokenizer`: Fixed infinite loop for "Unknown" keyword
+- `PdfDate`: Fixed OOB read in date parsing
+- Fix CFF font subsetting leak
+- `PdfEncodingMapSimple`: Fix skipping `beginbfrange` unmapped codes in `AppendToUnicodeEntries()`
+- `PdfCMapEncoding`: Handle `beginbfrange` declared size bigger than actual array
+- `PdfFlateFilter`: Detect error condition treated as warning during inflate
+- `basedefs`: Aggressively remove offending `<Windows.h>` macros and fix `<zlib.h>` conflict (#314)
+- `getCodeFromVariant`: Avoid invalid arithmetical shifts
+- CMap parser: Fixed infinite loop on negative character codes
+- Document keywords: Fixed retrieving doc keyword list (#318)
+- `PdfParser`: Fix `std::terminate` on malformed XRef stream during document load
+- `PdfFont`: Fixed `GetCharGIDInfos()` when font program subsetting is not enabled
+- `PdfFontMetricsFreetype`: Fixed retrieval of ascent/descent
+- `PdfCharCodeMap`: Fix UB in `PushRange` when duplicate range is at begin
+- `PdfDestination`: Removed spurious check for `PdfMemDocument` in `TryCreateFromObject`
+- `PdfAnnotationActionBase`: Fixed segfault in `getAction()`
+- `InputStream`: Try to ignore `/FlateDecode` errors
+- AFDKO: Integration made optional (still enabled by default)
+- Build: Fix link issues when client links against PoDoFo and pdfium
 
 ## Version 1.0.3
 - Fixed [#278](https://github.com/podofo/podofo/issues/278), [#288](https://github.com/podofo/podofo/issues/288), [#292](https://github.com/podofo/podofo/issues/292), [#290](https://github.com/podofo/podofo/issues/290), [#295](https://github.com/podofo/podofo/issues/295)
@@ -76,7 +126,7 @@
 - Tons of API improvements (see [API-MIGRATION.md](https://github.com/podofo/podofo/blob/master/API-MIGRATION.md))
 - Tons of other bug fixes
 
-## Version 0.10.6-dev
+## Version 0.10.6
 - Fix [#260](https://github.com/podofo/podofo/issues/260), [#278](https://github.com/podofo/podofo/issues/278),
   [#290](https://github.com/podofo/podofo/issues/290), [#295](https://github.com/podofo/podofo/issues/295),
   [#314](https://github.com/podofo/podofo/issues/314), [#317](https://github.com/podofo/podofo/issues/317),
