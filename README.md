@@ -76,7 +76,9 @@ GCC 8.1 support [broke](https://github.com/podofo/podofo/issues/116), but it cou
 
 ## Licensing
 
-The PoDoFo library is licensed under the [MPL 2.0](https://spdx.org/licenses/MPL-2.0.html) terms or, at your option, [LGPL 2.0 or later](https://spdx.org/licenses/LGPL-2.0-or-later.html).
+The PoDoFo library is licensed under the [LGPL 2.0 or later](https://spdx.org/licenses/LGPL-2.0-or-later.html) terms or, at your option, [MPL 2.0](https://spdx.org/licenses/MPL-2.0.html).
+Consider disabling [Adobe Font Development Kit for OpenType](https://github.com/adobe-type-tools/afdko) integration if you plan to distribute it together with [GPL 2.0-only](https://spdx.org/licenses/GPL-2.0-only.html) projects. Please refer to the [NOTICE](https://github.com/podofo/podofo/blob/master/NOTICE) file for the use of 3rd party components in PoDoFo.
+
 PoDoFo tools are licensed under the [GPL 2.0 or later](https://spdx.org/licenses/GPL-2.0-or-later.html) terms.
 
 ## Development quickstart
@@ -186,7 +188,7 @@ This unconditionally disable building tests, examples and tools;
 - `PODOFO_BUILD_STATIC`: If TRUE, build the library as a static object and use it in tests,
 examples and tools. By default a shared library is built;
 
-- `PODOFO_WITH_AFDKO`: Enable the [Adobe Font Development Kit for OpenType](https://github.com/adobe-type-tools/afdko) integration, defaults to ON;
+- `PODOFO_WITH_AFDKO`: Enable the [Adobe Font Development Kit for OpenType](https://github.com/adobe-type-tools/afdko) integration (used in Type1/OpenType font subsetting), defaults to ON;
 
 - `PODOFO_DEVENDOR_TCBSPAN`: If TRUE, the [`tcb::span`](https://github.com/tcbrindle/span) library will be devendored;
 
