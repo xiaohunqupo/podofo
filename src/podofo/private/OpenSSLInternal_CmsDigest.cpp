@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: (C) 2023 Francesco Pretto <ceztko@gmail.com>
-// SPDX-License-Identifier: OpenSSL
+// SPDX-License-Identifier: (LGPL-2.0-or-later WITH cryptsetup-OpenSSL-exception) OR MPL-2.0
+
+// This file constains functions and data structures that were inspired
+// from OpenSSL 1.1 internal code, heavily adapted to extract the digest
+// to be signed before inserting it into the CMS structure
 
 #include <podofo/private/PdfDeclarationsPrivate.h>
 #include "OpenSSLInternal.h"
 
 using namespace std;
 using namespace PoDoFo;
-
-// The following functions include software developed by
-// the OpenSSL Project for use in the OpenSSL Toolkit(http://www.openssl.org/)
-// License: https://www.openssl.org/source/license-openssl-ssleay.txt
 
 // This is a recreation of X509_SIG structure
 struct MY_X509_SIG
@@ -18,9 +18,9 @@ struct MY_X509_SIG
     ASN1_OCTET_STRING* digest;
 };
 
-static void compute_hash_to_sign(CMS_SignerInfo* si, unsigned char hash[], unsigned& len);
-static int cms_DigestAlgorithm_find_ctx(EVP_MD_CTX* mctx, BIO* chain, X509_ALGOR* mdalg);
-static void encode_pkcs1(X509_ALGOR* digestAlg,
+static void computeHashToSign(CMS_SignerInfo* si, unsigned char hash[], unsigned& len);
+static EVP_MD_CTX* findDigestContext(BIO* bio, X509_ALGOR* digestAlg);
+static void encodePKCS1(X509_ALGOR* digestAlg,
     const unsigned char* m, unsigned int m_len, charbuff& outbuff);
 
 static X509_ALGOR* getDigestAlgorithm(CMS_SignerInfo* si);
@@ -51,34 +51,43 @@ IMPLEMENT_ASN1_FUNCTIONS(MY_ESS_CERT_ID_V2)
 
 IMPLEMENT_ASN1_FUNCTIONS(MY_ESS_SIGNING_CERT_V2)
 
-// Ripped from cms_SignerInfo_content_sign in crypto/cms/cms_sd.c
+// Inspired from "cms_SignerInfo_content_sign" in crypto/cms/cms_sd.c
 void ssl::ComputeHashToSign(CMS_SignerInfo* si, BIO* chain, bool doWrapDigest, charbuff& hashToSign)
 {
     ASN1_OBJECT* ctype;
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned hashlen;
 
-    unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> mctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    if (!cms_DigestAlgorithm_find_ctx(mctx.get(), chain, getDigestAlgorithm(si)))
+    // Extract the hash computed in the signer info using the
+    // internal BIO chain, which allows streaming
+    unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digestCtx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    auto matchedCtx = findDigestContext(chain, getDigestAlgorithm(si));
+
+    // Copy the found context to the destination
+    if (EVP_MD_CTX_copy_ex(digestCtx.get(), matchedCtx) <= 0)
         goto Error;
 
-    if (EVP_DigestFinal_ex(mctx.get(), hash, &hashlen) <= 0)
+    // Compute the final digest value
+    if (EVP_DigestFinal_ex(digestCtx.get(), hash, &hashlen) <= 0)
         goto Error;
 
+    // Add the digest as a signed attribute
     if (!CMS_signed_add1_attr_by_NID(si, NID_pkcs9_messageDigest,
         V_ASN1_OCTET_STRING, hash, hashlen))
         goto Error;
 
+    // Add the "contentType" signed attribute, specifying the
+    // content to be signed is raw binary data (pkcs7-data)
     ctype = OBJ_nid2obj(NID_pkcs7_data);
     if (CMS_signed_add1_attr_by_NID(si, NID_pkcs9_contentType,
         V_ASN1_OBJECT, ctype, -1) <= 0)
         goto Error;
 
-    compute_hash_to_sign(si, hash, hashlen);
+    computeHashToSign(si, hash, hashlen);
     if (doWrapDigest)
     {
         // We also need to encode the digest in ANS1 structure
-        encode_pkcs1(getDigestAlgorithm(si), hash, hashlen, hashToSign);
+        encodePKCS1(getDigestAlgorithm(si), hash, hashlen, hashToSign);
     }
     else
     {
@@ -99,41 +108,45 @@ void ssl::WrapDigestPKCS1(const bufferview& hash, PdfHashingAlgorithm hashing, c
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error X509_ALGOR_new");
 
     X509_ALGOR_set_md(x509Algor.get(), ssl::GetEVP_MD(hashing));
-    encode_pkcs1(x509Algor.get(), (const unsigned char*)hash.data(), (unsigned)hash.size(), output);
+    encodePKCS1(x509Algor.get(), (const unsigned char*)hash.data(), (unsigned)hash.size(), output);
 }
 
 
-// Ripped from cms_DigestAlgorithm_find_ctx in crypto/cms/cms_lib.c
-int cms_DigestAlgorithm_find_ctx(EVP_MD_CTX* mctx, BIO* chain, X509_ALGOR* mdalg)
+// Inspired from "cms_DigestAlgorithm_find_ctx" in crypto/cms/cms_lib.c
+// Find the digest context that matches the algorithm in the BIO chain
+EVP_MD_CTX* findDigestContext(BIO* bio, X509_ALGOR* digestAlg)
 {
-    int nid;
-    auto mdoid = getASN1Object(mdalg);
-    nid = OBJ_obj2nid(mdoid);
-    // Look for digest type to match signature
-    for (;;)
-    {
-        EVP_MD_CTX* mtmp;
-        chain = BIO_find_type(chain, BIO_TYPE_MD);
-        if (chain == nullptr)
-            PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "CMS_NO_MATCHING_DIGEST");
+    // Convert the digest algorithm to a NID for easier comparison
+    int digestNid;
+    auto digestOid = getASN1Object(digestAlg);
+    digestNid = OBJ_obj2nid(digestOid);
 
-        BIO_get_md_ctx(chain, &mtmp);
-        if (EVP_MD_CTX_type(mtmp) == nid
-            // Workaround for broken implementations that use signature
-            // algorithm OID instead of digest.
-            || EVP_MD_pkey_type(EVP_MD_CTX_get0_md(mtmp)) == nid)
+    while (true)
+    {
+        // Search for BIO of type digest in the chain
+        EVP_MD_CTX* digestCtx;
+        bio = BIO_find_type(bio, BIO_TYPE_MD);
+        if (bio == nullptr)
+            break;
+
+        // Extract the context and check if it matches the digest algorithm
+        // NOTE: Some implementations use signature algorithm OID instead of digest.
+        BIO_get_md_ctx(bio, &digestCtx);
+        if (EVP_MD_CTX_type(digestCtx) == digestNid
+            || EVP_MD_pkey_type(EVP_MD_CTX_get0_md(digestCtx)) == digestNid)
         {
-            return EVP_MD_CTX_copy_ex(mctx, mtmp);
+            return digestCtx;
         }
 
-        chain = BIO_next(chain);
+        bio = BIO_next(bio);
     }
+
+    PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "No matching digest context found");
 }
 
-// Ripped from CMS_SignerInfo_sign in crypto/cms/cms_sd.c
-void compute_hash_to_sign(CMS_SignerInfo* si, unsigned char hash[], unsigned& hashlen)
+void computeHashToSign(CMS_SignerInfo* si, unsigned char hash[], unsigned& hashlen)
 {
-    EVP_MD_CTX* mctx = CMS_SignerInfo_get0_md_ctx(si);
+    auto mctx = CMS_SignerInfo_get0_md_ctx(si);
     STACK_OF(X509_ATTRIBUTE)* signedAttrs = nullptr;
     unsigned char* buf = nullptr;
     unsigned len;
@@ -171,20 +184,19 @@ Error:
     PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OpenSSLError, "Error while computing the MessageDigest");
 }
 
-/* Ripped/adapted from crypto/rsa/rsa_sign.c
- * encode_pkcs1 encodes a DigestInfo prefix of hash |type| and digest |m|, as
- * described in EMSA-PKCS1-v1_5-ENCODE, RFC 3447 section 9.2 step 2. This
- * encodes the DigestInfo (T and tLen) but does not add the padding.
- */
-void encode_pkcs1(X509_ALGOR* digestAlg,
-    const unsigned char* m, unsigned int m_len, charbuff& outbuff)
+// Inspired from "encode_pkcs1" in crypto/rsa/rsa_sign.c
+// Encodes a hash as described in RFC 3447 "9.2 EMSA-PKCS1-v1_5"
+// step 2, whitout padding. See https://datatracker.ietf.org/doc/html/rfc3447
+void encodePKCS1(X509_ALGOR* digestAlg,
+    const unsigned char* hash, unsigned int hashLen, charbuff& outbuff)
 {
+    // NOTE: X509_SIG is opaque in OpenSSL, so we need to recreate it
+    // here to be able to encode the structure as needed
+
     MY_X509_SIG sig;
     X509_ALGOR algor{ };
     ASN1_TYPE parameter{ };
     ASN1_OCTET_STRING digest{ };
-    unsigned char* buf = nullptr;
-    int len;
 
     sig.algor = digestAlg;
     sig.algor = &algor;
@@ -194,19 +206,20 @@ void encode_pkcs1(X509_ALGOR* digestAlg,
     sig.algor->parameter = &parameter;
 
     sig.digest = &digest;
-    sig.digest->data = const_cast<unsigned char*>(m);
-    sig.digest->length = m_len;
+    sig.digest->data = const_cast<unsigned char*>(hash);
+    sig.digest->length = hashLen;
 
     // This is the expansion of IMPLEMENT_ASN1_FUNCTIONS
     // NOTE: buf must be a local null pointer otherwise
     // the function will try to reuse the memory
-    len = ASN1_item_i2d((ASN1_VALUE*)&sig, &buf, ASN1_ITEM_rptr(MY_X509_SIG));
-    if (len < 0)
+    unsigned char* buf = nullptr;
+    int bufLen = ASN1_item_i2d((ASN1_VALUE*)&sig, &buf, ASN1_ITEM_rptr(MY_X509_SIG));
+    if (bufLen < 0)
         PODOFO_RAISE_ERROR_INFO(PdfErrorCode::OutOfMemory, "EncodeDigestPKCS1: Out of memory");
 
     try
     {
-        outbuff.resize(len);
+        outbuff.resize(bufLen);
     }
     catch (...)
     {
@@ -214,7 +227,7 @@ void encode_pkcs1(X509_ALGOR* digestAlg,
         throw;
     }
 
-    std::memcpy(outbuff.data(), buf, len);
+    std::memcpy(outbuff.data(), buf, bufLen);
     OPENSSL_free(buf);
 }
 
