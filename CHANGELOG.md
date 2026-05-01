@@ -1,6 +1,6 @@
 ## Version 1.1.0
 - `OpenSSLInternal`: Fixed potential double-free in `compute_hash_to_sign()`, [GHSA](https://github.com/podofo/podofo/security/advisories/GHSA-8fq6-rqpv-xq72)
-- PoDoFo is now licensed under the LGPLv2+ or MPL-2.0 license terms
+- PoDoFo is now licensed under the LGPLv2+ or MPL-2.0 license terms. Refer to the [licensing](https://github.com/podofo/podofo#licensing) section in the README for more details
 - Added support for ECDSA signing
 - Added resumable signing context feature with functions `PdfSigningContext::DumpInPlace()` and `PdfSigningContext::Restore()`
 - Added `PdfXMPPAcket::PruneAndValidate(pdfaLevel)` for XMP validation
