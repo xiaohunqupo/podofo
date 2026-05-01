@@ -1,4 +1,5 @@
 ## Version 1.1.0
+- `OpenSSLInternal`: Fixed potential double-free in `compute_hash_to_sign()`, [GHSA](https://github.com/podofo/podofo/security/advisories/GHSA-8fq6-rqpv-xq72)
 - PoDoFo is now licensed under the LGPLv2+ or MPL-2.0 license terms
 - Added support for ECDSA signing
 - Added resumable signing context feature with functions `PdfSigningContext::DumpInPlace()` and `PdfSigningContext::Restore()`
@@ -16,7 +17,6 @@
 - Improved `PdfFont` subsetting to include `/ToUnicode` maps
 - Improved `PdfSignature` with `SetCreatingApplication()` and `SetCreationApplication()`
 - Fixed `std::terminate` on malformed XRef stream during document load
-- Fixed potential double-free in OpenSSL `compute_hash_to_sign()`
 - Fixed `PdfXObjectForm` incorrect `BBox` and `Matrix` for rotated source pages
 - Fixed painting to the same page more than twice
 - Fixed several memory leaks in CMS signing and AFDKO wrapper
@@ -31,7 +31,7 @@
 - Fixed [#314](https://github.com/podofo/podofo/issues/314), [#317](https://github.com/podofo/podofo/issues/317),
   [#318](https://github.com/podofo/podofo/issues/318), [#335](https://github.com/podofo/podofo/issues/335),
   [#336](https://github.com/podofo/podofo/issues/336), [#337](https://github.com/podofo/podofo/issues/337)
-- `OpenSSLInternal`: Fixed potential double-free in `compute_hash_to_sign()`
+- `OpenSSLInternal`: Fixed potential double-free in `compute_hash_to_sign()`, [GHSA](https://github.com/podofo/podofo/security/advisories/GHSA-8fq6-rqpv-xq72)
 - CMS signing: Fixed minor/potential memory leaks
 - `FillXObjectFromPage`: Copy `/Group` dictionary to preserve transparency compositing (#337)
 - `PdfPainter`: Fix exception-safety for text drawing and XObject operations (#336)
