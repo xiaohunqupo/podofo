@@ -242,7 +242,7 @@ Open a terminal or command prompt and run the following command:
     ```
 ## Software life cycle and API stability
 
-Refer to the main article in the [Wiki](https://github.com/podofo/podofo/wiki/PoDoFo-releases-life-cycle-and-API-stability). 
+Refer to the main article in the [Wiki](https://github.com/podofo/podofo/wiki/Home). 
 At this [page](https://github.com/podofo/podofo/blob/master/API-MIGRATION.md) you can find an incomplete guide on migrating 0.9.8 code to 0.10.x, and from 0.10.x to 1.0.
 
 ## String encoding and buffer conventions
